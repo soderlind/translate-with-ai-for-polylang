@@ -11,6 +11,8 @@ https://github.com/user-attachments/assets/2f8c51da-143d-496f-9f88-2c5d5382d644
 - [Polylang](https://wordpress.org/plugins/polylang/)
 - An AI provider configured for the WordPress AI Client
 
+The plugin interface and command messages are available in English and Norwegian Bokmål (`nb_NO`), following the WordPress language setting.
+
 ## How it works
 
 1. In a post list, click the **+** next to a language that has no translation yet.
@@ -19,6 +21,14 @@ https://github.com/user-attachments/assets/2f8c51da-143d-496f-9f88-2c5d5382d644
 4. While the job runs, the post list shows **Translating to {language}…** and the confirmation notice updates automatically. The editor warns you not to edit or publish the draft while translation is running.
 5. When the job finishes, the post list shows **AI translation complete** and the status notice links to the draft. If it fails, the notice and post state show the error and a retry link.
 6. Review the draft and publish it.
+
+### Bulk translation
+
+Select multiple posts or pages in their list, choose **Translate to {language} with AI** under **Bulk actions**, and apply it. The plugin creates linked drafts and translates them one at a time in the background. The confirmation shows how many were queued, retried, skipped or could not be queued.
+
+Existing failed AI drafts are retried; other existing translations, posts without a Polylang language, posts already in the target language, and items without the required permissions are skipped. A failed translation does not stop the remaining drafts. Separate batches and individual translations can run independently.
+
+If a worker cannot start, the batch pauses. Fix the problem and use **Retry translation** on the failed draft or **Resume bulk translation** on a waiting draft. If a worker disappears or its draft is deleted, waiting drafts offer the resume action after 15 minutes. Resuming requires permission to edit both the selected draft and the current draft, if it still exists.
 
 ### What keeps the content safe
 
@@ -33,7 +43,7 @@ https://github.com/user-attachments/assets/2f8c51da-143d-496f-9f88-2c5d5382d644
 
 ### Retrying
 
-A **Retry translation** row action shows up on translations that failed or have been pending or processing for more than 15 minutes. An immediately reported dispatch failure is shown as a failure and can be retried immediately. A background request may also fail without reporting an error, in which case it remains pending until it can be retried. You can run `wp twaifp run <post_id>` immediately instead.
+A **Retry translation** row action shows up on translations that failed or have been pending or processing for more than 15 minutes. An immediately reported dispatch failure is shown as a failure and can be retried immediately. A background request may also fail without reporting an error, in which case it remains pending until it can be retried. You can run `wp twaifp run <post_id>` immediately for an individual job or the current job in a batch; use the resume action for a waiting draft.
 
 The site must be able to make an HTTP request to its own admin URL. HTTPS certificates are verified. Previously queued WP-Cron jobs still run after upgrading.
 
@@ -97,7 +107,7 @@ If a draft was left unfinished, delete it permanently and click + again to creat
 
 ## Uninstall
 
-When you delete the plugin, it removes its post meta (`_twaifp_*`) and any scheduled `twaifp_translate_post` events, on every site in a multisite network. The translated posts stay.
+When you delete the plugin, it removes its post meta (`_twaifp_*`), worker locks, bulk queue options and scheduled `twaifp_translate_post` events, on every site in a multisite network. The translated posts stay.
 
 ## Development
 

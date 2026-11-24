@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Soderlind\TranslateWithAiForPolylang\Admin;
 
 use Soderlind\TranslateWithAiForPolylang\Creator;
+use Soderlind\TranslateWithAiForPolylang\Translation\BulkQueue;
 use Soderlind\TranslateWithAiForPolylang\Translation\JobState;
 use Soderlind\TranslateWithAiForPolylang\Translation\TranslationJob;
 use WP_Post;
@@ -28,8 +29,9 @@ class Admin {
 	 *
 	 * @param Creator        $creator Translation creator.
 	 * @param TranslationJob $job     Translation job.
+	 * @param BulkQueue      $queue   Sequential batch runner.
 	 */
-	public function __construct( private Creator $creator, private TranslationJob $job ) {}
+	public function __construct( private Creator $creator, private TranslationJob $job, private BulkQueue $queue ) {}
 
 	/**
 	 * Registers hooks.
@@ -113,10 +115,13 @@ class Admin {
 	 */
 	public function row_actions( $actions, $post ) {
 		if ( $post instanceof WP_Post && $this->can_retry( $post ) ) {
+			$state = $this->job->state( $post->ID );
 			$actions['twaifp_retry'] = sprintf(
 				'<a href="%1$s">%2$s</a>',
 				esc_url( $this->retry_url( $post->ID ) ),
-				esc_html__( 'Retry translation', 'translate-with-ai-for-polylang' )
+				$state?->is_waiting()
+					? esc_html__( 'Resume bulk translation', 'translate-with-ai-for-polylang' )
+					: esc_html__( 'Retry translation', 'translate-with-ai-for-polylang' )
 			);
 		}
 
@@ -140,7 +145,15 @@ class Admin {
 			return $states;
 		}
 
-		if ( $state->is_active() ) {
+		if ( $state->is_waiting() && $state->batch_paused ) {
+			$states['twaifp'] = $this->post_state_markup( $post->ID, esc_html__( 'Bulk translation paused', 'translate-with-ai-for-polylang' ) );
+		} elseif ( $state->is_waiting() ) {
+			$label = esc_html(
+				/* translators: %s: Language name. */
+				sprintf( __( 'Waiting to translate to %s…', 'translate-with-ai-for-polylang' ), $state->language_name() )
+			);
+			$states['twaifp'] = $this->post_state_markup( $post->ID, $label );
+		} elseif ( $state->is_active() ) {
 			$label = esc_html(
 				/* translators: %s: Language name. */
 				sprintf( __( 'Translating to %s…', 'translate-with-ai-for-polylang' ), $state->language_name() )
@@ -180,7 +193,14 @@ class Admin {
 			wp_die( esc_html__( 'This translation cannot be retried.', 'translate-with-ai-for-polylang' ), '', [ 'response' => 403 ] );
 		}
 
-		$this->job->requeue( $post->ID, get_current_user_id() );
+		if ( $this->queue->contains( $post->ID ) ) {
+			$result = $this->queue->resume( $post->ID, get_current_user_id() );
+			if ( is_wp_error( $result ) ) {
+				wp_die( esc_html( $result->get_error_message() ), '', [ 'response' => 409, 'back_link' => true ] );
+			}
+		} else {
+			$this->job->requeue( $post->ID, get_current_user_id() );
+		}
 
 		$this->redirect_to_list( $post->post_type, $post->ID );
 	}
@@ -222,7 +242,7 @@ class Admin {
 			'twaifp-admin-status',
 			plugins_url( 'assets/admin-status.js', dirname( __DIR__, 2 ) . '/translate-with-ai-for-polylang.php' ),
 			[],
-			defined( 'TWAIFP_VERSION' ) ? TWAIFP_VERSION : '1.1.0',
+			defined( 'TWAIFP_VERSION' ) ? TWAIFP_VERSION : '1.2.0',
 			true
 		);
 		wp_localize_script(
@@ -239,6 +259,8 @@ class Admin {
 				'interval'  => 10000,
 				'strings'   => [
 					'pending'       => __( 'Translation to %s is queued.', 'translate-with-ai-for-polylang' ),
+					'waiting'       => __( 'Waiting to translate to %s in the bulk queue.', 'translate-with-ai-for-polylang' ),
+					'paused'        => __( 'The bulk translation queue is paused.', 'translate-with-ai-for-polylang' ),
 					'processing'    => __( 'Translating to %s in the background.', 'translate-with-ai-for-polylang' ),
 					'autoUpdate'    => __( 'This notice will update automatically.', 'translate-with-ai-for-polylang' ),
 					'editorWarning' => __( 'Avoid editing or publishing this draft until translation finishes. Edits made while the AI is working will discard its result.', 'translate-with-ai-for-polylang' ),
@@ -249,6 +271,7 @@ class Admin {
 					'viewError'     => __( 'View error', 'translate-with-ai-for-polylang' ),
 					'openDraft'     => __( 'Open draft', 'translate-with-ai-for-polylang' ),
 					'retry'         => __( 'Retry translation', 'translate-with-ai-for-polylang' ),
+					'resume'        => __( 'Resume bulk translation', 'translate-with-ai-for-polylang' ),
 					'reloadEditor'  => __( 'Reload this editor to see the translated draft.', 'translate-with-ai-for-polylang' ),
 					'reload'        => __( 'Reload editor', 'translate-with-ai-for-polylang' ),
 					'pollError'     => __( 'Could not refresh translation status. Retrying…', 'translate-with-ai-for-polylang' ),
@@ -280,15 +303,19 @@ class Admin {
 			);
 		}
 
+		$post      = get_post( $post_id );
+		$retryable = $post instanceof WP_Post && $this->can_retry( $post );
 		wp_send_json_success(
 			[
 				'status'    => $state->status,
 				'active'    => $state->is_active(),
-				'retryable' => $state->can_retry(),
+				'waiting'   => $state->is_waiting(),
+				'paused'    => $state->batch_paused,
+				'retryable' => $retryable,
 				'language'  => $state->language_name(),
 				'error'     => $state->error,
 				'editUrl'   => get_edit_post_link( $post_id, 'raw' ) ?: '',
-				'retryUrl'  => $state->can_retry() ? $this->retry_url( $post_id ) : '',
+				'retryUrl'  => $retryable ? $this->retry_url( $post_id ) : '',
 			]
 		);
 	}
@@ -335,7 +362,9 @@ class Admin {
 	 * @return bool
 	 */
 	private function can_retry( WP_Post $post ): bool {
-		return (bool) $this->job->state( $post->ID )?->can_retry() && current_user_can( 'edit_post', $post->ID );
+		return (bool) $this->job->state( $post->ID )?->can_retry()
+			&& current_user_can( 'edit_post', $post->ID )
+			&& ( ! $this->queue->contains( $post->ID ) || $this->queue->can_resume( $post->ID ) );
 	}
 
 	/**
@@ -352,13 +381,25 @@ class Admin {
 		$notice_class = 'notice-info';
 
 		if ( JobState::PENDING === $status ) {
-			$message = esc_html(
-				sprintf(
-					/* translators: %s: Language name. */
-					__( 'Translation to %s is queued.', 'translate-with-ai-for-polylang' ),
-					$language
-				)
-			);
+			if ( $state->is_waiting() && $state->batch_paused ) {
+				$message = esc_html__( 'The bulk translation queue is paused.', 'translate-with-ai-for-polylang' );
+			} elseif ( $state->is_waiting() ) {
+				$message = esc_html(
+					sprintf(
+						/* translators: %s: Language name. */
+						__( 'Waiting to translate to %s in the bulk queue.', 'translate-with-ai-for-polylang' ),
+						$language
+					)
+				);
+			} else {
+				$message = esc_html(
+					sprintf(
+						/* translators: %s: Language name. */
+						__( 'Translation to %s is queued.', 'translate-with-ai-for-polylang' ),
+						$language
+					)
+				);
+			}
 			if ( $is_editor ) {
 				$message .= ' ' . esc_html__( 'Avoid editing or publishing this draft until translation finishes. Edits made while the AI is working will discard its result.', 'translate-with-ai-for-polylang' );
 			} else {
@@ -418,11 +459,14 @@ class Admin {
 			$message      = esc_html__( 'Translation status is unavailable. Check the post list for its current state.', 'translate-with-ai-for-polylang' );
 		}
 
-		if ( $state && $state->is_stale() ) {
+		$post = get_post( $post_id );
+		if ( $state && $state->is_active() && $post instanceof WP_Post && $this->can_retry( $post ) ) {
 			$message .= ' ' . sprintf(
 				'<a href="%1$s">%2$s</a>',
 				esc_url( $this->retry_url( $post_id ) ),
-				esc_html__( 'Retry translation', 'translate-with-ai-for-polylang' )
+				$state->is_waiting()
+					? esc_html__( 'Resume bulk translation', 'translate-with-ai-for-polylang' )
+					: esc_html__( 'Retry translation', 'translate-with-ai-for-polylang' )
 			);
 		}
 

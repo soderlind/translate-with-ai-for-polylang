@@ -52,7 +52,8 @@
 
 		if (job.status === 'pending') {
 			notice.classList.add('notice-info');
-			message.append(document.createTextNode(format(strings.pending, language)));
+			const label = job.waiting ? (job.paused ? strings.paused : strings.waiting) : strings.pending;
+			message.append(document.createTextNode(format(label, language)));
 			if (isEditor) {
 				message.append(document.createTextNode(` ${strings.editorWarning}`));
 			} else {
@@ -81,7 +82,7 @@
 
 		// A stale job is still "processing" but can be retried.
 		if (job.active && job.retryable) {
-			addLink(message, job.retryUrl, strings.retry);
+			addLink(message, job.retryUrl, job.waiting ? strings.resume : strings.retry);
 		}
 	}
 
@@ -93,7 +94,9 @@
 
 		state.replaceChildren();
 		if (job.status === 'pending' || job.status === 'processing') {
-			state.textContent = format(job.status === 'pending' ? strings.pending : strings.processing, job.language || '');
+			const label = job.waiting ? (job.paused ? strings.paused : strings.waiting) :
+				(job.status === 'pending' ? strings.pending : strings.processing);
+			state.textContent = format(label, job.language || '');
 		} else if (job.status === 'done') {
 			state.textContent = strings.done;
 		} else if (job.status === 'failed') {

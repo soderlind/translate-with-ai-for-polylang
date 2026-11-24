@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-25
+
+### Added
+
+- Bulk-translate selected posts or pages into one language, processing drafts sequentially with failed-draft retries and interrupted-batch recovery.
+- Norwegian Bokmål translations for the interface and WP-CLI messages.
+
 ## [1.1.0] - 2026-11-24
 
 ### Changed

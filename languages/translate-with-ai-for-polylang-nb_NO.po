@@ -1,0 +1,368 @@
+# Copyright (C) 2026 Per Soderlind
+# This file is distributed under the GPL v2 or later.
+msgid ""
+msgstr ""
+"Project-Id-Version: Translate with AI for Polylang 1.2.0\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/translate-with-ai-for-polylang\n"
+"Last-Translator: Automatically generated\n"
+"Language-Team: Norwegian Bokmål\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-11-24T23:32:47+00:00\n"
+"PO-Revision-Date: 2026-11-25 00:25+0100\n"
+"Language: nb_NO\n"
+"X-Generator: WP-CLI 2.12.0\n"
+"X-Domain: translate-with-ai-for-polylang\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#. Plugin Name of the plugin
+#: translate-with-ai-for-polylang.php
+msgid "Translate with AI for Polylang"
+msgstr "Oversett med KI for Polylang"
+
+#. Description of the plugin
+#: translate-with-ai-for-polylang.php
+msgid "Makes Polylang's \"Add a translation\" (+) create a linked draft that is translated with the WordPress AI Client in the background."
+msgstr "Lar Polylangs «Legg til en oversettelse» (+) opprette et tilknyttet utkast som oversettes med WordPress AI Client i bakgrunnen."
+
+#. Author of the plugin
+#: translate-with-ai-for-polylang.php
+msgid "Per Soderlind"
+msgstr "Per Soderlind"
+
+#. Author URI of the plugin
+#: translate-with-ai-for-polylang.php
+msgid "https://soderlind.no"
+msgstr "https://soderlind.no"
+
+#: src/Admin/Admin.php:86
+#: src/Admin/Admin.php:187
+#: src/Cli/Command.php:54
+msgid "Post not found."
+msgstr "Fant ikke innlegget."
+
+#: src/Admin/Admin.php:92
+msgid "You are not allowed to translate this post."
+msgstr "Du har ikke tillatelse til å oversette dette innlegget."
+
+#: src/Admin/Admin.php:98
+msgid "This post already has a translation in that language."
+msgstr "Dette innlegget har allerede en oversettelse til det språket."
+
+#: src/Admin/Admin.php:123
+#: src/Admin/Admin.php:274
+#: src/Admin/Admin.php:468
+msgid "Resume bulk translation"
+msgstr "Fortsett masseoversettelsen"
+
+#: src/Admin/Admin.php:124
+#: src/Admin/Admin.php:273
+#: src/Admin/Admin.php:455
+#: src/Admin/Admin.php:469
+msgid "Retry translation"
+msgstr "Prøv oversettelsen på nytt"
+
+#: src/Admin/Admin.php:149
+msgid "Bulk translation paused"
+msgstr "Masseoversettelse satt på pause"
+
+#. translators: %s: Language name.
+#: src/Admin/Admin.php:153
+#, php-format
+msgid "Waiting to translate to %s…"
+msgstr "Venter på å oversette til %s …"
+
+#. translators: %s: Language name.
+#: src/Admin/Admin.php:159
+#, php-format
+msgid "Translating to %s…"
+msgstr "Oversetter til %s …"
+
+#: src/Admin/Admin.php:165
+#: src/Admin/Admin.php:267
+msgid "AI translation complete"
+msgstr "KI-oversettelsen er fullført"
+
+#: src/Admin/Admin.php:172
+msgid "Translation failed — view error"
+msgstr "Oversettelsen mislyktes – vis feil"
+
+#: src/Admin/Admin.php:193
+#: src/Translation/BulkQueue.php:211
+#: src/Translation/TranslationJob.php:190
+msgid "This translation cannot be retried."
+msgstr "Denne oversettelsen kan ikke prøves på nytt."
+
+#. translators: %s: Language name.
+#: src/Admin/Admin.php:261
+#: src/Admin/Admin.php:398
+#, php-format
+msgid "Translation to %s is queued."
+msgstr "Oversettelse til %s er lagt i kø."
+
+#. translators: %s: Language name.
+#: src/Admin/Admin.php:262
+#: src/Admin/Admin.php:390
+#, php-format
+msgid "Waiting to translate to %s in the bulk queue."
+msgstr "Venter på tur i køen for å oversette til %s."
+
+#: src/Admin/Admin.php:263
+#: src/Admin/Admin.php:385
+msgid "The bulk translation queue is paused."
+msgstr "Køen for masseoversettelse er satt på pause."
+
+#. translators: %s: Language name.
+#: src/Admin/Admin.php:264
+#: src/Admin/Admin.php:412
+#, php-format
+msgid "Translating to %s in the background."
+msgstr "Oversetter til %s i bakgrunnen."
+
+#: src/Admin/Admin.php:265
+#: src/Admin/Admin.php:406
+#: src/Admin/Admin.php:419
+msgid "This notice will update automatically."
+msgstr "Dette varselet oppdateres automatisk."
+
+#: src/Admin/Admin.php:266
+#: src/Admin/Admin.php:404
+#: src/Admin/Admin.php:417
+msgid "Avoid editing or publishing this draft until translation finishes. Edits made while the AI is working will discard its result."
+msgstr "Unngå å redigere eller publisere dette utkastet før oversettelsen er fullført. Hvis du redigerer mens KI-en arbeider, blir resultatet forkastet."
+
+#. translators: %s: Language name.
+#: src/Admin/Admin.php:268
+#: src/Admin/Admin.php:429
+#, php-format
+msgid "Translation to %s is ready to review."
+msgstr "Oversettelsen til %s er klar til gjennomgang."
+
+#. translators: 1: Language name, 2: Error message.
+#: src/Admin/Admin.php:269
+#: src/Admin/Admin.php:447
+#, php-format
+msgid "Translation to %1$s failed: %2$s"
+msgstr "Oversettelse til %1$s mislyktes: %2$s"
+
+#: src/Admin/Admin.php:270
+msgid "Translation failed"
+msgstr "Oversettelsen mislyktes"
+
+#: src/Admin/Admin.php:271
+msgid "View error"
+msgstr "Vis feil"
+
+#: src/Admin/Admin.php:272
+#: src/Admin/Admin.php:438
+msgid "Open draft"
+msgstr "Åpne utkast"
+
+#: src/Admin/Admin.php:275
+msgid "Reload this editor to see the translated draft."
+msgstr "Last inn redigeringsvinduet på nytt for å se det oversatte utkastet."
+
+#: src/Admin/Admin.php:276
+msgid "Reload editor"
+msgstr "Last inn redigeringsvinduet på nytt"
+
+#: src/Admin/Admin.php:277
+msgid "Could not refresh translation status. Retrying…"
+msgstr "Kunne ikke oppdatere oversettelsesstatusen. Prøver på nytt …"
+
+#: src/Admin/Admin.php:278
+msgid "Translation status is unavailable. Reload the page to check again."
+msgstr "Oversettelsesstatusen er ikke tilgjengelig. Last siden på nytt for å sjekke igjen."
+
+#: src/Admin/Admin.php:293
+msgid "You are not allowed to view this translation status."
+msgstr "Du har ikke tillatelse til å se statusen for denne oversettelsen."
+
+#: src/Admin/Admin.php:301
+msgid "Translation status is unavailable."
+msgstr "Oversettelsesstatusen er ikke tilgjengelig."
+
+#: src/Admin/Admin.php:424
+msgid "Translation is complete. Reload this editor to see the translated draft."
+msgstr "Oversettelsen er fullført. Last inn redigeringsvinduet på nytt for å se det oversatte utkastet."
+
+#: src/Admin/Admin.php:459
+msgid "Translation status is unavailable. Check the post list for its current state."
+msgstr "Oversettelsesstatusen er ikke tilgjengelig. Sjekk innleggslisten for å se gjeldende status."
+
+#. translators: %s: Target language name.
+#: src/Admin/BulkActions.php:75
+#, php-format
+msgid "Translate to %s with AI"
+msgstr "Oversett til %s med KI"
+
+#: src/Admin/BulkActions.php:204
+msgid "The selected bulk translation language is not available."
+msgstr "Det valgte språket for masseoversettelse er ikke tilgjengelig."
+
+#. translators: 1: New translations, 2: Retried translations, 3: Skipped posts, 4: Failed attempts.
+#: src/Admin/BulkActions.php:223
+#, php-format
+msgid "Bulk translations: %1$d queued, %2$d retried, %3$d skipped, %4$d failed to queue."
+msgstr "Masseoversettelser: %1$d lagt i kø, %2$d forsøkt på nytt, %3$d hoppet over, %4$d kunne ikke legges i kø."
+
+#: src/Admin/BulkActions.php:232
+msgid "Check the server error log for details."
+msgstr "Se serverens feillogg for detaljer."
+
+#: src/Admin/BulkActions.php:235
+msgid "The bulk queue could not be confirmed as started. Check the translation errors and retry as needed."
+msgstr "Det kunne ikke bekreftes at køen for masseoversettelse er startet. Kontroller oversettelsesfeilene og prøv på nytt ved behov."
+
+#: src/Admin/BulkActions.php:242
+msgid "View translation drafts"
+msgstr "Vis oversettelsesutkast"
+
+#: src/Translation/AiClientGenerator.php:82
+msgid "The WordPress AI Client is not available. WordPress 7.0 or later is required."
+msgstr "WordPress AI Client er ikke tilgjengelig. WordPress 7.0 eller nyere kreves."
+
+#: src/Translation/AiClientGenerator.php:90
+#: src/Translation/TranslationJob.php:418
+#: src/Translation/TranslationJob.php:507
+msgid "Another worker took over this translation."
+msgstr "En annen arbeidsprosess overtok denne oversettelsen."
+
+#: src/Translation/AiClientGenerator.php:106
+msgid "The AI provider could not be reached. Check Settings → Connectors and retry."
+msgstr "Kunne ikke kontakte KI-leverandøren. Kontroller Innstillinger → Tilkoblinger og prøv på nytt."
+
+#: src/Translation/BulkQueue.php:47
+msgid "There are no translations to queue."
+msgstr "Det finnes ingen oversettelser å legge i kø."
+
+#: src/Translation/BulkQueue.php:52
+msgid "Could not create a bulk translation queue identifier."
+msgstr "Kunne ikke opprette en identifikator for køen for masseoversettelse."
+
+#: src/Translation/BulkQueue.php:64
+msgid "Could not save the bulk translation queue."
+msgstr "Kunne ikke lagre køen for masseoversettelse."
+
+#: src/Translation/BulkQueue.php:72
+msgid "Could not associate a translation with the bulk queue."
+msgstr "Kunne ikke knytte oversettelsen til køen for masseoversettelse."
+
+#: src/Translation/BulkQueue.php:207
+msgid "The bulk translation queue is no longer available."
+msgstr "Køen for masseoversettelse er ikke lenger tilgjengelig."
+
+#: src/Translation/BulkQueue.php:220
+msgid "You are not allowed to retry the current translation in this bulk queue."
+msgstr "Du har ikke tillatelse til å prøve den gjeldende oversettelsen i denne køen på nytt."
+
+#: src/Translation/BulkQueue.php:228
+msgid "The current bulk translation is still running."
+msgstr "Den gjeldende masseoversettelsen pågår fortsatt."
+
+#: src/Translation/BulkQueue.php:240
+msgid "Could not resume the bulk translation queue."
+msgstr "Kunne ikke fortsette køen for masseoversettelse."
+
+#: src/Translation/BulkQueue.php:290
+msgid "Could not advance the bulk translation queue."
+msgstr "Kunne ikke gå videre til neste oversettelse i køen."
+
+#: src/Translation/BulkQueue.php:298
+msgid "Could not finish the bulk translation queue."
+msgstr "Kunne ikke fullføre køen for masseoversettelse."
+
+#: src/Translation/PostContent.php:124
+msgid "The AI response did not return one translation per text segment, so it was not saved."
+msgstr "KI-svaret inneholdt ikke én oversettelse per tekstsegment og ble derfor ikke lagret."
+
+#: src/Translation/TranslationJob.php:96
+msgid "Invalid translation worker request."
+msgstr "Ugyldig forespørsel fra arbeidsprosessen for oversettelse."
+
+#: src/Translation/TranslationJob.php:147
+#: src/Translation/TranslationJob.php:183
+#: src/Translation/TranslationJob.php:308
+msgid "This post is already being translated."
+msgstr "Dette innholdet oversettes allerede."
+
+#: src/Translation/TranslationJob.php:153
+msgid "This translation is no longer queued."
+msgstr "Denne oversettelsen er ikke lenger i kø."
+
+#: src/Translation/TranslationJob.php:156
+msgid "This translation already has a worker."
+msgstr "Denne oversettelsen har allerede en arbeidsprosess."
+
+#: src/Translation/TranslationJob.php:194
+#: src/Translation/TranslationJob.php:198
+#: src/Translation/TranslationJob.php:386
+#: src/Translation/TranslationJob.php:393
+msgid "Nothing to translate for this post."
+msgstr "Det er ingenting å oversette for dette innholdet."
+
+#: src/Translation/TranslationJob.php:244
+#: src/Translation/TranslationJob.php:254
+msgid "Could not save the translation worker state."
+msgstr "Kunne ikke lagre tilstanden til arbeidsprosessen for oversettelse."
+
+#: src/Translation/TranslationJob.php:270
+msgid "Could not schedule the translation worker."
+msgstr "Kunne ikke planlegge arbeidsprosessen for oversettelse."
+
+#: src/Translation/TranslationJob.php:314
+msgid "This translation is waiting for its turn in a bulk queue."
+msgstr "Denne oversettelsen venter på tur i køen for masseoversettelse."
+
+#: src/Translation/TranslationJob.php:317
+msgid "This translation worker request is no longer valid."
+msgstr "Forespørselen fra arbeidsprosessen for oversettelse er ikke lenger gyldig."
+
+#. translators: %s: Error reported when starting the background worker.
+#: src/Translation/TranslationJob.php:363
+#, php-format
+msgid "Could not start the translation worker: %s"
+msgstr "Kunne ikke starte arbeidsprosessen for oversettelse: %s"
+
+#: src/Translation/TranslationJob.php:518
+msgid "The post was edited while it was being translated, so the translation was not saved. Retry to translate the current version."
+msgstr "Innholdet ble redigert mens det ble oversatt, så oversettelsen ble ikke lagret. Prøv på nytt for å oversette den gjeldende versjonen."
+
+#: src/Cli/Command.php:57
+msgid "You are not allowed to translate this post, or Polylang does not translate its post type. Pass --user=<admin>."
+msgstr "Du har ikke tillatelse til å oversette dette innlegget, eller Polylang oversetter ikke denne innholdstypen. Bruk --user=<admin>."
+
+#. translators: %s: Available language slugs.
+#: src/Cli/Command.php:67
+#, php-format
+msgid "Unknown language or translation already exists. Choose one of: %s"
+msgstr "Ukjent språk eller oversettelsen finnes allerede. Velg ett av: %s"
+
+#: src/Cli/Command.php:70
+msgid "The post is already translated into every language."
+msgstr "Innholdet er allerede oversatt til alle språk."
+
+#. translators: 1: Translation post ID, 2: Error message.
+#: src/Cli/Command.php:86
+#, php-format
+msgid "Created translation %1$d, but translation failed: %2$s"
+msgstr "Opprettet oversettelse %1$d, men oversettelsen mislyktes: %2$s"
+
+#. translators: 1: Translation post ID, 2: Language name.
+#: src/Cli/Command.php:95
+#, php-format
+msgid "Created translation %1$d and queued AI translation to %2$s."
+msgstr "Opprettet oversettelse %1$d og la KI-oversettelse til %2$s i kø."
+
+#. translators: %d: Translation post ID.
+#: src/Cli/Command.php:126
+#, php-format
+msgid "Translating post %d…"
+msgstr "Oversetter innhold %d …"
+
+#. translators: 1: Translation post ID, 2: Post title.
+#: src/Cli/Command.php:140
+#, php-format
+msgid "Translated post %1$d: %2$s"
+msgstr "Oversatte innlegg %1$d: %2$s"

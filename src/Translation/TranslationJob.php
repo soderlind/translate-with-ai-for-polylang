@@ -30,7 +30,7 @@ class TranslationJob {
 	/**
 	 * Every post meta key the job writes, e.g. for cleanup on uninstall.
 	 */
-	public const META_KEYS = [ self::META_STATUS, self::META_LANGUAGE, self::META_ERROR, self::META_USER, self::META_SOURCE, self::META_UPDATED, self::META_WORKER ];
+	public const META_KEYS = [ self::META_STATUS, self::META_LANGUAGE, self::META_ERROR, self::META_USER, self::META_SOURCE, self::META_UPDATED, self::META_WORKER, BulkQueue::META_BATCH ];
 
 	private const WORKER_ACTION = 'twaifp_run_translation';
 
@@ -127,6 +127,108 @@ class TranslationJob {
 			return;
 		}
 
+		$dispatch = $this->prepare_dispatch( $post_id );
+		if ( is_wp_error( $dispatch ) ) {
+			$this->fail_start( $post_id, $dispatch );
+			return;
+		}
+		$this->dispatch( $post_id, $dispatch );
+	}
+
+	/**
+	 * Starts a pending job without resetting its saved language or source.
+	 *
+	 * @param int $post_id Translation post ID.
+	 * @return true|WP_Error
+	 */
+	public function start_pending( int $post_id ) {
+		$lock = $this->acquire_lock( $post_id );
+		if ( null === $lock ) {
+			return new WP_Error( 'twaifp_in_progress', __( 'This post is already being translated.', 'translate-with-ai-for-polylang' ) );
+		}
+
+		try {
+			clean_post_cache( $post_id );
+			if ( self::STATUS_PENDING !== get_post_meta( $post_id, self::META_STATUS, true ) ) {
+				return new WP_Error( 'twaifp_not_pending', __( 'This translation is no longer queued.', 'translate-with-ai-for-polylang' ) );
+			}
+			if ( '' !== get_post_meta( $post_id, self::META_WORKER, true ) ) {
+				return new WP_Error( 'twaifp_worker_queued', __( 'This translation already has a worker.', 'translate-with-ai-for-polylang' ) );
+			}
+			$this->set_status( $post_id, self::STATUS_PENDING );
+			$dispatch = $this->prepare_dispatch( $post_id, true );
+		} finally {
+			$this->release_lock( $post_id, $lock );
+		}
+
+		if ( is_wp_error( $dispatch ) ) {
+			$this->fail_start( $post_id, $dispatch );
+			return $dispatch;
+		}
+		return $this->dispatch( $post_id, $dispatch );
+	}
+
+	/**
+	 * Prepares a failed, or optionally stale, job for a later worker.
+	 *
+	 * @param int                       $post_id     Translation post ID.
+	 * @param int                       $user_id     User requesting the retry.
+	 * @param bool                      $allow_stale Whether to permit a stale active job.
+	 * @param array<string,string>|null $language    Current target language, if supplied.
+	 * @return true|WP_Error
+	 */
+	public function prepare_retry( int $post_id, int $user_id, bool $allow_stale = false, ?array $language = null ) {
+		$lock = $this->acquire_lock( $post_id );
+		if ( null === $lock ) {
+			return new WP_Error( 'twaifp_in_progress', __( 'This post is already being translated.', 'translate-with-ai-for-polylang' ) );
+		}
+
+		try {
+			clean_post_cache( $post_id );
+			$state = $this->state( $post_id );
+			if ( ! $state || ( self::STATUS_FAILED !== $state->status && ! ( $allow_stale && $state->is_stale() && ! $state->is_waiting() ) ) ) {
+				return new WP_Error( 'twaifp_not_retryable', __( 'This translation cannot be retried.', 'translate-with-ai-for-polylang' ) );
+			}
+			foreach ( [ 'code', 'name', 'locale' ] as $key ) {
+				if ( ! isset( $state->language[ $key ] ) || ! is_string( $state->language[ $key ] ) || '' === trim( $state->language[ $key ] ) ) {
+					return new WP_Error( 'twaifp_invalid_job', __( 'Nothing to translate for this post.', 'translate-with-ai-for-polylang' ) );
+				}
+			}
+			if ( null !== $language && $state->language['code'] !== ( $language['code'] ?? '' ) ) {
+				return new WP_Error( 'twaifp_invalid_job', __( 'Nothing to translate for this post.', 'translate-with-ai-for-polylang' ) );
+			}
+
+			$this->queue(
+				$post_id,
+				$language ?? $state->language,
+				(int) get_post_meta( $post_id, self::META_SOURCE, true ),
+				$user_id,
+				false
+			);
+			return true;
+		} finally {
+			$this->release_lock( $post_id, $lock );
+		}
+	}
+
+	/**
+	 * Marks a prepared job failed if it cannot be started.
+	 *
+	 * @param int      $post_id Translation post ID.
+	 * @param WP_Error $error   Start error.
+	 */
+	public function fail_pending( int $post_id, WP_Error $error ): void {
+		$this->fail_start( $post_id, $error );
+	}
+
+	/**
+	 * Prepares a worker token, or selects the legacy cron runner.
+	 *
+	 * @param int  $post_id  Translation post ID.
+	 * @param bool $mark_cron Mark a scheduled bulk job while holding its lock.
+	 * @return string|WP_Error|null Worker token, error, or null for cron.
+	 */
+	private function prepare_dispatch( int $post_id, bool $mark_cron = false ) {
 		/**
 		 * Filters whether to start a worker immediately.
 		 *
@@ -136,15 +238,44 @@ class TranslationJob {
 		 * @param int  $post_id Translation post ID.
 		 */
 		if ( ! apply_filters( 'twaifp_spawn_cron', true, $post_id ) ) {
-			$scheduled = wp_schedule_single_event( time(), self::HOOK, [ $post_id ], true );
-			if ( is_wp_error( $scheduled ) ) {
-				$this->fail_start( $post_id, $scheduled );
+			if ( $mark_cron ) {
+				update_post_meta( $post_id, self::META_WORKER, 'cron' );
+				if ( 'cron' !== get_post_meta( $post_id, self::META_WORKER, true ) ) {
+					return new WP_Error( 'twaifp_worker_storage', __( 'Could not save the translation worker state.', 'translate-with-ai-for-polylang' ) );
+				}
 			}
-			return;
+			return null;
 		}
 
 		$token = wp_generate_password( 64, false, false );
-		update_post_meta( $post_id, self::META_WORKER, hash( 'sha256', $token ) );
+		$hash  = hash( 'sha256', $token );
+		update_post_meta( $post_id, self::META_WORKER, $hash );
+		if ( $hash !== get_post_meta( $post_id, self::META_WORKER, true ) ) {
+			return new WP_Error( 'twaifp_worker_storage', __( 'Could not save the translation worker state.', 'translate-with-ai-for-polylang' ) );
+		}
+		return $token;
+	}
+
+	/**
+	 * Dispatches a prepared worker after its lock has been released.
+	 *
+	 * @param int         $post_id Translation post ID.
+	 * @param string|null $token   Worker token, or null for cron.
+	 * @return true|WP_Error
+	 */
+	private function dispatch( int $post_id, ?string $token ) {
+		if ( null === $token ) {
+			$scheduled = wp_schedule_single_event( time(), self::HOOK, [ $post_id ], true );
+			if ( false === $scheduled ) {
+				$scheduled = new WP_Error( 'twaifp_schedule_failed', __( 'Could not schedule the translation worker.', 'translate-with-ai-for-polylang' ) );
+			}
+			if ( is_wp_error( $scheduled ) ) {
+				$this->fail_start( $post_id, $scheduled );
+				return $scheduled;
+			}
+			return true;
+		}
+
 		$result = wp_remote_post(
 			admin_url( 'admin-ajax.php' ),
 			[
@@ -159,7 +290,9 @@ class TranslationJob {
 		);
 		if ( is_wp_error( $result ) ) {
 			$this->fail_start( $post_id, $result, $token );
+			return $result;
 		}
+		return true;
 	}
 
 	/**
@@ -177,6 +310,9 @@ class TranslationJob {
 
 		try {
 			clean_post_cache( $post_id );
+			if ( null !== BulkQueue::waiting_context( $post_id ) ) {
+				return new WP_Error( 'twaifp_waiting_in_batch', __( 'This translation is waiting for its turn in a bulk queue.', 'translate-with-ai-for-polylang' ) );
+			}
 			if ( null !== $worker_token && ( ! $this->valid_worker_token( $post_id, $worker_token ) || self::STATUS_PENDING !== get_post_meta( $post_id, self::META_STATUS, true ) ) ) {
 				return new WP_Error( 'twaifp_invalid_worker', __( 'This translation worker request is no longer valid.', 'translate-with-ai-for-polylang' ) );
 			}
@@ -227,11 +363,9 @@ class TranslationJob {
 				__( 'Could not start the translation worker: %s', 'translate-with-ai-for-polylang' ),
 				$error->get_error_message()
 			);
-			$failure = new WP_Error( 'twaifp_worker_start_failed', $message );
-			update_post_meta( $post_id, self::META_ERROR, $message );
-			$this->set_status( $post_id, self::STATUS_FAILED );
+			$failure  = new WP_Error( 'twaifp_worker_start_failed', $message );
 			$language = get_post_meta( $post_id, self::META_LANGUAGE, true );
-			do_action( 'twaifp_translation_failed', $post_id, $failure, is_array( $language ) ? $language : [] );
+			$this->record_failure( $post_id, $failure, is_array( $language ) ? $language : [] );
 		} finally {
 			$this->release_lock( $post_id, $lock );
 		}
@@ -248,8 +382,17 @@ class TranslationJob {
 		clean_post_cache( $post_id );
 		$post     = get_post( $post_id );
 		$language = get_post_meta( $post_id, self::META_LANGUAGE, true );
-		if ( ! $post instanceof WP_Post || ! is_array( $language ) || empty( $language['locale'] ) ) {
+		if ( ! $post instanceof WP_Post ) {
 			return new WP_Error( 'twaifp_invalid_job', __( 'Nothing to translate for this post.', 'translate-with-ai-for-polylang' ) );
+		}
+		if ( ! is_array( $language )
+			|| ! isset( $language['name'], $language['locale'] )
+			|| ! is_string( $language['name'] ) || '' === trim( $language['name'] )
+			|| ! is_string( $language['locale'] ) || '' === trim( $language['locale'] )
+		) {
+			$error = new WP_Error( 'twaifp_invalid_job', __( 'Nothing to translate for this post.', 'translate-with-ai-for-polylang' ) );
+			$this->record_failure( $post_id, $error, is_array( $language ) ? $language : [] );
+			return $error;
 		}
 
 		$this->set_status( $post_id, self::STATUS_PROCESSING );
@@ -276,17 +419,7 @@ class TranslationJob {
 		}
 
 		if ( is_wp_error( $result ) ) {
-			update_post_meta( $post_id, self::META_ERROR, $result->get_error_message() );
-			$this->set_status( $post_id, self::STATUS_FAILED );
-
-			/**
-			 * Fires when translating a post failed.
-			 *
-			 * @param int                  $post_id  Translation post ID.
-			 * @param WP_Error             $result   Error.
-			 * @param array<string,string> $language Target language.
-			 */
-			do_action( 'twaifp_translation_failed', $post_id, $result, $language );
+			$this->record_failure( $post_id, $result, $language );
 			return $result;
 		}
 
@@ -317,12 +450,15 @@ class TranslationJob {
 		}
 
 		$language = get_post_meta( $post_id, self::META_LANGUAGE, true );
+		$waiting  = self::STATUS_PENDING === $status ? BulkQueue::waiting_context( $post_id ) : null;
 
 		return new JobState(
 			$status,
 			is_array( $language ) ? $language : [],
 			(string) get_post_meta( $post_id, self::META_ERROR, true ),
-			(int) get_post_meta( $post_id, self::META_UPDATED, true )
+			(int) get_post_meta( $post_id, self::META_UPDATED, true ),
+			$waiting['updated'] ?? null,
+			$waiting['paused'] ?? false
 		);
 	}
 
@@ -415,6 +551,27 @@ class TranslationJob {
 	private function set_status( int $post_id, string $status ): void {
 		update_post_meta( $post_id, self::META_STATUS, $status );
 		update_post_meta( $post_id, self::META_UPDATED, time() );
+	}
+
+	/**
+	 * Records and reports a translation failure.
+	 *
+	 * @param int                  $post_id  Translation post ID.
+	 * @param WP_Error             $error    Error.
+	 * @param array<string,string> $language Target language.
+	 */
+	private function record_failure( int $post_id, WP_Error $error, array $language ): void {
+		update_post_meta( $post_id, self::META_ERROR, $error->get_error_message() );
+		$this->set_status( $post_id, self::STATUS_FAILED );
+
+		/**
+		 * Fires when translating a post failed.
+		 *
+		 * @param int                  $post_id  Translation post ID.
+		 * @param WP_Error             $error    Error.
+		 * @param array<string,string> $language Target language.
+		 */
+		do_action( 'twaifp_translation_failed', $post_id, $error, $language );
 	}
 
 	/**

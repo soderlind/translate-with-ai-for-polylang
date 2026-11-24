@@ -35,7 +35,54 @@ class Polylang {
 	 * @return bool
 	 */
 	public function applies_to( WP_Post $post ): bool {
-		return self::is_active() && 'attachment' !== $post->post_type && pll_is_translated_post_type( $post->post_type );
+		return $this->supports_post_type( $post->post_type );
+	}
+
+	/**
+	 * Whether Polylang manages a post type.
+	 *
+	 * @param string $post_type Post type.
+	 * @return bool
+	 */
+	public function supports_post_type( string $post_type ): bool {
+		return self::is_active() && 'attachment' !== $post_type && pll_is_translated_post_type( $post_type );
+	}
+
+	/**
+	 * Returns the configured languages keyed by Polylang slug.
+	 *
+	 * @return array<string, array{code:string, name:string, locale:string}>
+	 */
+	public function languages(): array {
+		$languages = [];
+		foreach ( pll_languages_list( [ 'fields' => '' ] ) as $language ) {
+			$languages[ $language->slug ] = [
+				'code'   => $language->slug,
+				'name'   => $language->name,
+				'locale' => $language->locale,
+			];
+		}
+		return $languages;
+	}
+
+	/**
+	 * Finds the post itself or its linked translation in a target language.
+	 *
+	 * @param WP_Post $source Source post.
+	 * @param string  $code   Polylang language slug.
+	 * @return int|null Post ID, zero when no translation exists, or null when the source has no language.
+	 */
+	public function translation_id( WP_Post $source, string $code ): ?int {
+		$source_language = pll_get_post_language( $source->ID );
+		if ( ! is_string( $source_language ) || '' === $source_language ) {
+			return null;
+		}
+		if ( $code === $source_language ) {
+			return $source->ID;
+		}
+
+		$translations = pll_get_post_translations( $source->ID );
+		return (int) ( $translations[ $code ] ?? 0 );
 	}
 
 	/**
@@ -49,15 +96,11 @@ class Polylang {
 		$translations    = pll_get_post_translations( $source->ID );
 
 		$languages = [];
-		foreach ( pll_languages_list( [ 'fields' => '' ] ) as $language ) {
-			if ( $language->slug === $source_language || isset( $translations[ $language->slug ] ) ) {
+		foreach ( $this->languages() as $code => $language ) {
+			if ( $code === $source_language || isset( $translations[ $code ] ) ) {
 				continue;
 			}
-			$languages[ $language->slug ] = [
-				'code'   => $language->slug,
-				'name'   => $language->name,
-				'locale' => $language->locale,
-			];
+			$languages[ $code ] = $language;
 		}
 
 		return $languages;

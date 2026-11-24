@@ -30,16 +30,20 @@ final class JobState {
 	/**
 	 * Constructor.
 	 *
-	 * @param string               $status   One of the status constants.
-	 * @param array<string,string> $language Target language ( code, name, locale ).
-	 * @param string               $error    Error message of a failed job.
-	 * @param int                  $updated  Unix time of the last status change or heartbeat, 0 if unknown.
+	 * @param string               $status        One of the status constants.
+	 * @param array<string,string> $language      Target language ( code, name, locale ).
+	 * @param string               $error         Error message of a failed job.
+	 * @param int                  $updated       Unix time of the last status change or heartbeat, 0 if unknown.
+	 * @param int|null             $batch_updated Current batch heartbeat when this job is waiting its turn.
+	 * @param bool                 $batch_paused  Whether its batch is paused.
 	 */
 	public function __construct(
 		public readonly string $status,
 		public readonly array $language,
 		public readonly string $error,
-		public readonly int $updated
+		public readonly int $updated,
+		public readonly ?int $batch_updated = null,
+		public readonly bool $batch_paused = false
 	) {}
 
 	/**
@@ -61,13 +65,23 @@ final class JobState {
 	}
 
 	/**
+	 * Whether this pending job is waiting for another translation in its batch.
+	 *
+	 * @return bool
+	 */
+	public function is_waiting(): bool {
+		return self::PENDING === $this->status && null !== $this->batch_updated;
+	}
+
+	/**
 	 * Whether an active job has had no heartbeat for so long that it is presumed dead.
 	 *
 	 * @param int|null $now Unix time to compare with. Defaults to now.
 	 * @return bool
 	 */
 	public function is_stale( ?int $now = null ): bool {
-		return $this->is_active() && $this->updated > 0 && ( $now ?? time() ) - $this->updated > self::STALE_AFTER;
+		$updated = $this->batch_updated ?? $this->updated;
+		return $this->is_active() && $updated > 0 && ( $now ?? time() ) - $updated > self::STALE_AFTER;
 	}
 
 	/**
@@ -85,6 +99,6 @@ final class JobState {
 	 * @return bool
 	 */
 	public function can_retry(): bool {
-		return self::FAILED === $this->status || $this->is_stale();
+		return self::FAILED === $this->status || ( $this->is_waiting() && $this->batch_paused ) || $this->is_stale();
 	}
 }

@@ -51,16 +51,24 @@ class Command {
 	public function translate( array $args, array $assoc_args ): void {
 		$post = get_post( (int) $args[0] );
 		if ( ! $post instanceof WP_Post ) {
-			WP_CLI::error( 'Post not found.' );
+			WP_CLI::error( __( 'Post not found.', 'translate-with-ai-for-polylang' ) );
 		}
 		if ( ! $this->creator->can_translate( $post ) ) {
-			WP_CLI::error( 'You are not allowed to translate this post, or Polylang does not translate its post type. Pass --user=<admin>.' );
+			WP_CLI::error( __( 'You are not allowed to translate this post, or Polylang does not translate its post type. Pass --user=<admin>.', 'translate-with-ai-for-polylang' ) );
 		}
 
 		$language = $this->creator->language( $post, (string) ( $assoc_args['language'] ?? '' ) );
 		if ( ! $language ) {
 			$missing = array_keys( $this->creator->languages( $post ) );
-			WP_CLI::error( $missing ? sprintf( 'Unknown language or translation already exists. Choose one of: %s', implode( ', ', $missing ) ) : 'The post is already translated into every language.' );
+			WP_CLI::error(
+				$missing
+					? sprintf(
+						/* translators: %s: Available language slugs. */
+						__( 'Unknown language or translation already exists. Choose one of: %s', 'translate-with-ai-for-polylang' ),
+						implode( ', ', $missing )
+					)
+					: __( 'The post is already translated into every language.', 'translate-with-ai-for-polylang' )
+			);
 		}
 
 		$async          = (bool) WP_CLI\Utils\get_flag_value( $assoc_args, 'async', false );
@@ -72,9 +80,23 @@ class Command {
 		if ( $async ) {
 			$state = $this->job->state( $translation_id );
 			if ( $state && $state->status === TranslationJob::STATUS_FAILED ) {
-				WP_CLI::error( sprintf( 'Created translation %d, but translation failed: %s', $translation_id, $state->error ) );
+				WP_CLI::error(
+					sprintf(
+						/* translators: 1: Translation post ID, 2: Error message. */
+						__( 'Created translation %1$d, but translation failed: %2$s', 'translate-with-ai-for-polylang' ),
+						$translation_id,
+						$state->error
+					)
+				);
 			}
-			WP_CLI::success( sprintf( 'Created translation %d and queued AI translation to %s.', $translation_id, $language['name'] ) );
+			WP_CLI::success(
+				sprintf(
+					/* translators: 1: Translation post ID, 2: Language name. */
+					__( 'Created translation %1$d and queued AI translation to %2$s.', 'translate-with-ai-for-polylang' ),
+					$translation_id,
+					$language['name']
+				)
+			);
 			return;
 		}
 
@@ -98,7 +120,13 @@ class Command {
 	 */
 	public function run( array $args, array $assoc_args ): void {
 		$post_id = (int) $args[0];
-		WP_CLI::log( sprintf( 'Translating post %d…', $post_id ) );
+		WP_CLI::log(
+			sprintf(
+				/* translators: %d: Translation post ID. */
+				__( 'Translating post %d…', 'translate-with-ai-for-polylang' ),
+				$post_id
+			)
+		);
 
 		wp_clear_scheduled_hook( TranslationJob::HOOK, [ $post_id ] );
 		$result = $this->job->run( $post_id );
@@ -106,6 +134,13 @@ class Command {
 			WP_CLI::error( $result );
 		}
 
-		WP_CLI::success( sprintf( 'Translated post %d: %s', $post_id, get_the_title( $post_id ) ) );
+		WP_CLI::success(
+			sprintf(
+				/* translators: 1: Translation post ID, 2: Post title. */
+				__( 'Translated post %1$d: %2$s', 'translate-with-ai-for-polylang' ),
+				$post_id,
+				get_the_title( $post_id )
+			)
+		);
 	}
 }

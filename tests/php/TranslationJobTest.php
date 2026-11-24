@@ -10,6 +10,8 @@ declare(strict_types=1);
 namespace Soderlind\TranslateWithAiForPolylang\Tests;
 
 use Brain\Monkey\Functions;
+use Soderlind\TranslateWithAiForPolylang\Translation\BulkQueue;
+use Soderlind\TranslateWithAiForPolylang\Translation\JobState;
 use Soderlind\TranslateWithAiForPolylang\Translation\TranslationJob;
 use Soderlind\TranslateWithAiForPolylang\Translation\Translator;
 use WP_Error;
@@ -22,6 +24,13 @@ final class TranslationJobTest extends TestCase {
 	private bool $spawn = true;
 	private int $token_number = 0;
 	private TranslationJob $job;
+	private array $posts = [];
+	private array $options = [];
+	private array $denied = [];
+	private bool $allow_batch_storage = true;
+	private int $current_user = 5;
+
+	private const LANGUAGE = [ 'code' => 'nb', 'name' => 'Norwegian', 'locale' => 'nb_NO' ];
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -253,7 +262,375 @@ final class TranslationJobTest extends TestCase {
 		$this->assertCount( 1, $generator->prompts );
 	}
 
+	public function test_bulk_jobs_run_in_order_and_remove_their_batch(): void {
+		$queue = $this->prepare_bulk( [ 11, 12, 13 ] );
+
+		$this->assertTrue( $queue->start( [ 11, 12, 13 ] ) );
+		$this->assertSame( [ 11 ], $this->request_ids() );
+		$this->assertTrue( $this->job->state( 12 )->is_waiting() );
+		$this->assertSame( 'twaifp_waiting_in_batch', $this->job->run( 12 )->get_error_code() );
+
+		$this->assertTrue( $this->run_request( 0 ) );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertSame( TranslationJob::STATUS_DONE, $this->job->state( 11 )->status );
+		$queue->translated( 11, self::LANGUAGE, 111 );
+		$this->assertSame( [ 11, 12 ], $this->request_ids(), 'A repeated completion must not start another worker.' );
+
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertSame( [ 11, 12, 13 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 2 ) );
+		$this->assertSame( [], $this->options );
+		foreach ( [ 11, 12, 13 ] as $post_id ) {
+			$this->assertSame( TranslationJob::STATUS_DONE, $this->job->state( $post_id )->status );
+			$this->assertArrayNotHasKey( BulkQueue::META_BATCH, $this->meta[ $post_id ] );
+		}
+	}
+
+	public function test_translation_failure_does_not_stop_the_rest_of_the_batch(): void {
+		$generator = new FakeGenerator( [ new WP_Error( 'ai_failed', 'The AI request failed.' ) ] );
+		$queue     = $this->prepare_bulk( [ 11, 12 ], $generator );
+		$this->posts[11]->post_title = 'Needs translation';
+		$queue->start( [ 11, 12 ] );
+
+		$this->assertSame( 'ai_failed', $this->run_request( 0 )->get_error_code() );
+		$this->assertSame( TranslationJob::STATUS_FAILED, $this->job->state( 11 )->status );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_start_failure_pauses_and_an_authorized_retry_resumes_in_order(): void {
+		$queue          = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+
+		$this->assertTrue( is_wp_error( $queue->start( [ 11, 12 ] ) ) );
+		$this->assertSame( TranslationJob::STATUS_FAILED, $this->job->state( 11 )->status );
+		$this->assertTrue( $this->job->state( 12 )->batch_paused );
+		$this->assertTrue( $this->job->state( 12 )->can_retry() );
+		$this->assertSame( [ 11 ], $this->request_ids() );
+
+		$this->response = [];
+		$this->assertTrue( $queue->resume( 12, 9 ) );
+		$this->assertSame( [ 11, 11 ], $this->request_ids() );
+		$this->assertSame( 9, $this->meta[11][ TranslationJob::META_USER ] );
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertSame( [ 11, 11, 12 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 2 ) );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_later_worker_start_failure_pauses_the_remaining_jobs(): void {
+		$queue = $this->prepare_bulk( [ 11, 12, 13 ] );
+		$queue->start( [ 11, 12, 13 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+
+		$this->assertTrue( $this->run_request( 0 ) );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertSame( TranslationJob::STATUS_FAILED, $this->job->state( 12 )->status );
+		$this->assertTrue( $this->job->state( 13 )->batch_paused );
+
+		$this->response = [];
+		$this->assertTrue( $queue->resume( 13, 5 ) );
+		$this->assertTrue( $this->run_request( 2 ) );
+		$this->assertSame( [ 11, 12, 12, 13 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 3 ) );
+	}
+
+	public function test_waiting_job_uses_current_job_heartbeat_and_can_recover_after_deletion(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$queue->start( [ 11, 12 ] );
+		$option = array_key_first( $this->options );
+		$old    = time() - JobState::STALE_AFTER - 1;
+		$this->options[ $option ]['updated']            = $old;
+		$this->meta[12][ TranslationJob::META_UPDATED ] = $old;
+
+		$this->assertFalse( $this->job->state( 12 )->can_retry(), 'A fresh current worker keeps the waiting job alive.' );
+		$this->meta[11][ TranslationJob::META_UPDATED ] = $old;
+		$queue->deleting( 11 );
+		unset( $this->posts[11], $this->meta[11] );
+		$this->assertFalse( $this->job->state( 12 )->can_retry(), 'Deleting the current draft starts the recovery wait.' );
+		$this->options[ $option ]['updated'] = $old;
+		$this->assertTrue( $this->job->state( 12 )->can_retry() );
+		$this->assertTrue( $queue->resume( 12, 5 ) );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_deleting_all_drafts_removes_only_their_abandoned_batch(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$queue->start( [ 11, 12 ] );
+
+		$queue->deleting( 12 );
+		$this->assertCount( 1, $this->options );
+		unset( $this->posts[12], $this->meta[12] );
+		$queue->deleting( 11 );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_deletion_during_batch_setup_keeps_unassociated_remaining_jobs(): void {
+		$queue     = $this->prepare_bulk( [ 11, 12 ] );
+		$triggered = false;
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( $queue, &$triggered ): void {
+				$this->meta[ $post_id ][ $key ] = $value;
+				if ( ! $triggered && 11 === $post_id && BulkQueue::META_BATCH === $key ) {
+					$triggered = true;
+					$queue->deleting( 11 );
+				}
+			}
+		);
+
+		$this->assertTrue( $queue->start( [ 11, 12 ] ) );
+		$this->assertCount( 1, $this->options );
+		$this->assertSame( [ 11 ], $this->request_ids() );
+	}
+
+	public function test_resuming_a_batch_requires_permission_for_its_current_translation(): void {
+		$queue          = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+		$queue->start( [ 11, 12 ] );
+		$this->denied = [ 11 ];
+
+		$this->assertFalse( $queue->can_resume( 12 ) );
+		$this->assertSame( 'twaifp_batch_forbidden', $queue->resume( 12, 5 )->get_error_code() );
+		$this->assertSame( [ 11 ], $this->request_ids() );
+	}
+
+	public function test_stale_worker_is_replaced_before_the_batch_continues(): void {
+		$queue  = $this->prepare_bulk( [ 11, 12 ] );
+		$queue->start( [ 11, 12 ] );
+		$option = array_key_first( $this->options );
+		$old    = time() - JobState::STALE_AFTER - 1;
+		$this->options[ $option ]['updated']           = $old;
+		$this->meta[11][ TranslationJob::META_STATUS ]  = TranslationJob::STATUS_PROCESSING;
+		$this->meta[11][ TranslationJob::META_UPDATED ] = $old;
+
+		$this->assertTrue( $queue->resume( 12, 9 ) );
+		$this->assertSame( [ 11, 11 ], $this->request_ids() );
+		$this->assertSame( 'twaifp_invalid_worker', $this->run_request( 0 )->get_error_code() );
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertSame( [ 11, 11, 12 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 2 ) );
+	}
+
+	public function test_a_second_resume_does_not_restart_a_job_already_being_prepared(): void {
+		$queue          = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+		$queue->start( [ 11, 12 ] );
+		$this->meta[11][ TranslationJob::META_STATUS ]  = TranslationJob::STATUS_PENDING;
+		$this->meta[11][ TranslationJob::META_UPDATED ] = time();
+
+		$this->assertSame( 'twaifp_batch_running', $queue->resume( 12, 5 )->get_error_code() );
+		$this->assertSame( [ 11 ], $this->request_ids() );
+	}
+
+	public function test_manually_running_a_paused_current_job_clears_the_waiting_display(): void {
+		$queue          = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+		$queue->start( [ 11, 12 ] );
+		$this->meta[11][ TranslationJob::META_STATUS ] = TranslationJob::STATUS_PROCESSING;
+
+		$this->assertFalse( $this->job->state( 12 )->batch_paused );
+		$this->assertFalse( $this->job->state( 12 )->can_retry() );
+	}
+
+	public function test_invalid_current_job_fails_and_advances_the_batch(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$queue->start( [ 11, 12 ] );
+		$this->meta[11][ TranslationJob::META_LANGUAGE ]['locale'] = [ 'invalid' ];
+
+		$this->assertSame( 'twaifp_invalid_job', $this->run_request( 0 )->get_error_code() );
+		$this->assertSame( TranslationJob::STATUS_FAILED, $this->job->state( 11 )->status );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+	}
+
+	public function test_legacy_cron_batches_schedule_only_one_job_at_a_time(): void {
+		$queue       = $this->prepare_bulk( [ 11, 12 ] );
+		$this->spawn = false;
+		$scheduled   = [];
+		Functions\when( 'wp_schedule_single_event' )->alias(
+			static function ( $time, $hook, $args ) use ( &$scheduled ): bool {
+				$scheduled[] = $args[0];
+				return true;
+			}
+		);
+
+		$this->assertTrue( $queue->start( [ 11, 12 ] ) );
+		$this->assertSame( [ 11 ], $scheduled );
+		$this->assertSame( 'twaifp_worker_queued', $this->job->start_pending( 11 )->get_error_code() );
+		$this->job->handle_cron( 11 );
+		$this->assertSame( [ 11, 12 ], $scheduled );
+		$this->job->handle_cron( 12 );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_failed_batch_storage_leaves_prepared_jobs_retryable(): void {
+		$queue                     = $this->prepare_bulk( [ 11, 12 ] );
+		$this->allow_batch_storage = false;
+
+		$this->assertSame( 'twaifp_batch_storage', $queue->start( [ 11, 12 ] )->get_error_code() );
+		$this->assertSame( [], $this->request_ids() );
+		$this->assertTrue( $this->job->state( 11 )->can_retry() );
+		$this->assertTrue( $this->job->state( 12 )->can_retry() );
+	}
+
+	public function test_failed_batch_association_cleans_up_and_fails_prepared_jobs(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ): void {
+				if ( 12 !== $post_id || BulkQueue::META_BATCH !== $key ) {
+					$this->meta[ $post_id ][ $key ] = $value;
+				}
+			}
+		);
+
+		$this->assertSame( 'twaifp_batch_storage', $queue->start( [ 11, 12 ] )->get_error_code() );
+		$this->assertSame( [], $this->options );
+		$this->assertArrayNotHasKey( BulkQueue::META_BATCH, $this->meta[11] );
+		$this->assertTrue( $this->job->state( 11 )->can_retry() );
+		$this->assertTrue( $this->job->state( 12 )->can_retry() );
+	}
+
+	public function test_completed_batch_is_not_reported_as_failed_when_dispatch_returns_an_error(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = function ( $args ): WP_Error {
+			$this->assertTrue( $this->job->run( $args['body']['post_id'], $args['body']['token'] ) );
+			return new WP_Error( 'http_request_failed', 'Connection closed after the worker started.' );
+		};
+
+		$this->assertTrue( $queue->start( [ 11, 12 ] ) );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertSame( TranslationJob::STATUS_DONE, $this->job->state( 11 )->status );
+		$this->assertSame( TranslationJob::STATUS_DONE, $this->job->state( 12 )->status );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_preparing_a_retry_rejects_mismatched_language_metadata(): void {
+		$this->queue( false );
+		$this->meta[7][ TranslationJob::META_STATUS ] = TranslationJob::STATUS_FAILED;
+		$wrong = [ 'code' => 'de', 'name' => 'German', 'locale' => 'de_DE' ];
+
+		$this->assertSame( 'twaifp_invalid_job', $this->job->prepare_retry( 7, 5, false, $wrong )->get_error_code() );
+		$this->assertSame( TranslationJob::STATUS_FAILED, $this->job->state( 7 )->status );
+		$updated = [ 'code' => 'nb', 'name' => 'Norwegian', 'locale' => 'nb_NO_new' ];
+		$this->assertTrue( $this->job->prepare_retry( 7, 5, false, $updated ) );
+		$this->assertSame( $updated, $this->job->state( 7 )->language );
+		$this->assertSame( [], $this->requests );
+	}
+
+	/**
+	 * Sets up a real batch and in-memory WordPress storage.
+	 *
+	 * @param list<int>          $post_ids  Translation post IDs.
+	 * @param FakeGenerator|null $generator Optional scripted generator.
+	 * @return BulkQueue
+	 */
+	private function prepare_bulk( array $post_ids, ?FakeGenerator $generator = null ): BulkQueue {
+		require_once dirname( __DIR__, 2 ) . '/vendor/johnpbloch/wordpress-core/wp-includes/class-wp-post.php';
+		foreach ( $post_ids as $post_id ) {
+			$this->posts[ $post_id ] = new \WP_Post(
+				(object) [
+					'ID'                => $post_id,
+					'post_author'       => '5',
+					'post_status'       => 'draft',
+					'post_type'         => 'post',
+					'post_title'        => '',
+					'post_excerpt'      => '',
+					'post_content'      => '',
+					'post_modified_gmt' => '2026-01-01 00:00:00',
+				]
+			);
+		}
+
+		Functions\when( 'wp_generate_password' )->alias(
+			fn( $length ) => match ( $length ) {
+				32      => str_repeat( 'b', 32 ),
+				64      => 'worker-' . ++$this->token_number,
+				default => 'lock-token',
+			}
+		);
+		Functions\when( 'get_post' )->alias( fn( $post_id ) => $this->posts[ $post_id ] ?? null );
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key, $value = '' ): void {
+				if ( '' === $value || ( $this->meta[ $post_id ][ $key ] ?? '' ) === $value ) {
+					unset( $this->meta[ $post_id ][ $key ] );
+				}
+			}
+		);
+		Functions\when( 'add_option' )->alias(
+			function ( $name, $value ): bool {
+				if ( ! $this->allow_batch_storage || isset( $this->options[ $name ] ) ) {
+					return false;
+				}
+				$this->options[ $name ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'get_option' )->alias( fn( $name ) => $this->options[ $name ] ?? false );
+		Functions\when( 'update_option' )->alias(
+			function ( $name, $value ): bool {
+				if ( ( $this->options[ $name ] ?? null ) === $value ) {
+					return false;
+				}
+				$this->options[ $name ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_option' )->alias(
+			function ( $name ): bool {
+				if ( ! isset( $this->options[ $name ] ) ) {
+					return false;
+				}
+				unset( $this->options[ $name ] );
+				return true;
+			}
+		);
+		Functions\when( 'current_user_can' )->alias( fn( $cap, $post_id ) => ! in_array( $post_id, $this->denied, true ) );
+		Functions\when( 'get_current_user_id' )->alias( fn() => $this->current_user );
+		Functions\when( 'wp_set_current_user' )->alias(
+			function ( $user_id ): void {
+				$this->current_user = (int) $user_id;
+			}
+		);
+		Functions\when( 'wp_slash' )->alias( static fn( $value ) => $value );
+		Functions\when( 'wp_update_post' )->alias( static fn( $data ) => $data['ID'] );
+
+		$generator = $generator ?? new FakeGenerator();
+		$this->job = new TranslationJob( new Translator( $generator ), $generator );
+		$queue     = new BulkQueue( $this->job );
+		Functions\when( 'do_action' )->alias(
+			static function ( $hook, ...$args ) use ( $queue ): void {
+				if ( 'twaifp_translated' === $hook ) {
+					$queue->translated( ...$args );
+				} elseif ( 'twaifp_translation_failed' === $hook ) {
+					$queue->failed( ...$args );
+				}
+			}
+		);
+		foreach ( $post_ids as $post_id ) {
+			$this->job->queue( $post_id, self::LANGUAGE, $post_id + 100, 5, false );
+		}
+		return $queue;
+	}
+
+	/**
+	 * @return list<int>
+	 */
+	private function request_ids(): array {
+		return array_map( static fn( $request ) => $request[1]['body']['post_id'], $this->requests );
+	}
+
+	/**
+	 * @param int $index Recorded request index.
+	 * @return true|WP_Error
+	 */
+	private function run_request( int $index ) {
+		$body = $this->requests[ $index ][1]['body'];
+		return $this->job->run( $body['post_id'], $body['token'] );
+	}
+
 	private function queue( bool $schedule = true ): void {
-		$this->job->queue( 7, [ 'code' => 'nb', 'name' => 'Norwegian', 'locale' => 'nb_NO' ], 3, 5, $schedule );
+		$this->job->queue( 7, self::LANGUAGE, 3, 5, $schedule );
 	}
 }
