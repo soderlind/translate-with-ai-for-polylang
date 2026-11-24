@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-24
+
+### Changed
+
+- Start translation jobs with a direct authenticated background request rather than waiting for WP-Cron; retain compatibility with existing scheduled jobs and sites opting out through twaifp_spawn_cron.
+- Report immediate worker-start failures and keep stalled jobs retryable.
+- Explain plugin rename in README.
+- Update asset link in README.
+- Add GitHub link for user attachments.
+- Remove unnecessary URL from README.
+
 ## [1.0.0] - 2026-11-15
 
 ### Changed

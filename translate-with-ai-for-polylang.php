@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Translate with AI for Polylang
  * Description: Makes Polylang's "Add a translation" (+) create a linked draft that is translated with the WordPress AI Client in the background.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Per Soderlind
  * Author URI: https://soderlind.no
  * License: GPL v2 or later
@@ -29,7 +29,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TWAIFP_VERSION', '1.0.0' );
+define( 'TWAIFP_VERSION', '1.1.0' );
 
 if ( file_exists( __DIR__ . '/vendor/autoload.php' ) ) {
 	require_once __DIR__ . '/vendor/autoload.php';

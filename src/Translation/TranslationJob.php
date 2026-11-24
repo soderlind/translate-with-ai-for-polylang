@@ -25,11 +25,14 @@ class TranslationJob {
 	public const META_USER     = '_twaifp_user';
 	public const META_SOURCE   = '_twaifp_source';
 	public const META_UPDATED  = '_twaifp_updated';
+	public const META_WORKER   = '_twaifp_worker';
 
 	/**
 	 * Every post meta key the job writes, e.g. for cleanup on uninstall.
 	 */
-	public const META_KEYS = [ self::META_STATUS, self::META_LANGUAGE, self::META_ERROR, self::META_USER, self::META_SOURCE, self::META_UPDATED ];
+	public const META_KEYS = [ self::META_STATUS, self::META_LANGUAGE, self::META_ERROR, self::META_USER, self::META_SOURCE, self::META_UPDATED, self::META_WORKER ];
+
+	private const WORKER_ACTION = 'twaifp_run_translation';
 
 	public const STATUS_PENDING    = JobState::PENDING;
 	public const STATUS_PROCESSING = JobState::PROCESSING;
@@ -55,11 +58,13 @@ class TranslationJob {
 	public function __construct( private Translator $translator, private TextGenerator $generator ) {}
 
 	/**
-	 * Registers the cron hook.
+	 * Registers the worker and legacy cron hooks.
 	 */
 	public function register(): void {
 		add_action( self::HOOK, [ $this, 'handle_cron' ] );
 		add_action( 'before_delete_post', [ $this, 'unschedule' ] );
+		add_action( 'wp_ajax_' . self::WORKER_ACTION, [ $this, 'handle_worker' ] );
+		add_action( 'wp_ajax_nopriv_' . self::WORKER_ACTION, [ $this, 'handle_worker' ] );
 	}
 
 	/**
@@ -81,13 +86,33 @@ class TranslationJob {
 	}
 
 	/**
+	 * Handles an authenticated, single-use background worker request.
+	 */
+	public function handle_worker(): void {
+		$post_id = isset( $_POST['post_id'] ) ? absint( wp_unslash( $_POST['post_id'] ) ) : 0;
+		$token   = isset( $_POST['token'] ) && is_string( $_POST['token'] ) ? wp_unslash( $_POST['token'] ) : '';
+
+		if ( ! $post_id || ! $this->valid_worker_token( $post_id, $token ) ) {
+			wp_send_json_error( [ 'message' => __( 'Invalid translation worker request.', 'translate-with-ai-for-polylang' ) ], 403 );
+		}
+
+		ignore_user_abort( true );
+		$result = $this->run( $post_id, $token );
+		if ( is_wp_error( $result ) ) {
+			wp_send_json_error( [ 'message' => $result->get_error_message() ], 409 );
+		}
+
+		wp_send_json_success();
+	}
+
+	/**
 	 * Queues a translation for background translation.
 	 *
 	 * @param int                  $post_id   Translation post ID.
 	 * @param array<string,string> $language  Target language ( code, name, locale ).
 	 * @param int                  $source_id Source post ID.
 	 * @param int                  $user_id   User who requested the translation.
-	 * @param bool                 $schedule  Whether to schedule a WP-Cron event. Pass false when the caller runs the job itself.
+	 * @param bool                 $schedule  Whether to start a background worker. Pass false when the caller runs the job itself.
 	 */
 	public function queue( int $post_id, array $language, int $source_id, int $user_id, bool $schedule = true ): void {
 		update_post_meta( $post_id, self::META_LANGUAGE, $language );
@@ -97,42 +122,118 @@ class TranslationJob {
 		$this->set_status( $post_id, self::STATUS_PENDING );
 
 		wp_clear_scheduled_hook( self::HOOK, [ $post_id ] );
+		delete_post_meta( $post_id, self::META_WORKER );
 		if ( ! $schedule ) {
 			return;
 		}
-		wp_schedule_single_event( time(), self::HOOK, [ $post_id ] );
 
 		/**
-		 * Filters whether to start WP-Cron right away so the translation begins immediately.
+		 * Filters whether to start a worker immediately.
 		 *
-		 * Runs even when DISABLE_WP_CRON is set, since the user is waiting for the result.
-		 * Return false to leave the job to the regular cron runner.
+		 * Return false to retain the legacy behavior of leaving the job to WP-Cron.
 		 *
-		 * @param bool $spawn   Whether to spawn WP-Cron. Default true.
+		 * @param bool $spawn   Whether to start immediately. Default true.
 		 * @param int  $post_id Translation post ID.
 		 */
-		if ( apply_filters( 'twaifp_spawn_cron', true, $post_id ) ) {
-			spawn_cron();
+		if ( ! apply_filters( 'twaifp_spawn_cron', true, $post_id ) ) {
+			$scheduled = wp_schedule_single_event( time(), self::HOOK, [ $post_id ], true );
+			if ( is_wp_error( $scheduled ) ) {
+				$this->fail_start( $post_id, $scheduled );
+			}
+			return;
+		}
+
+		$token = wp_generate_password( 64, false, false );
+		update_post_meta( $post_id, self::META_WORKER, hash( 'sha256', $token ) );
+		$result = wp_remote_post(
+			admin_url( 'admin-ajax.php' ),
+			[
+				'timeout'  => 0.01,
+				'blocking' => false,
+				'body'     => [
+					'action'  => self::WORKER_ACTION,
+					'post_id' => $post_id,
+					'token'   => $token,
+				],
+			]
+		);
+		if ( is_wp_error( $result ) ) {
+			$this->fail_start( $post_id, $result, $token );
 		}
 	}
 
 	/**
 	 * Translates the post in place.
 	 *
-	 * @param int $post_id Translation post ID.
+	 * @param int         $post_id Translation post ID.
+	 * @param string|null $worker_token Single-use token for a background request, or null for a manual run.
 	 * @return true|WP_Error
 	 */
-	public function run( int $post_id ) {
+	public function run( int $post_id, ?string $worker_token = null ) {
 		$token = $this->acquire_lock( $post_id );
 		if ( null === $token ) {
 			return new WP_Error( 'twaifp_in_progress', __( 'This post is already being translated.', 'translate-with-ai-for-polylang' ) );
 		}
 
 		try {
+			clean_post_cache( $post_id );
+			if ( null !== $worker_token && ( ! $this->valid_worker_token( $post_id, $worker_token ) || self::STATUS_PENDING !== get_post_meta( $post_id, self::META_STATUS, true ) ) ) {
+				return new WP_Error( 'twaifp_invalid_worker', __( 'This translation worker request is no longer valid.', 'translate-with-ai-for-polylang' ) );
+			}
+			delete_post_meta( $post_id, self::META_WORKER );
 			return $this->run_locked( $post_id, $token );
 		} finally {
 			$this->generator->before_request( null );
 			$this->release_lock( $post_id, $token );
+		}
+	}
+
+	/**
+	 * Checks a worker token without storing the token itself.
+	 *
+	 * @param int    $post_id Translation post ID.
+	 * @param string $token   Worker token.
+	 * @return bool
+	 */
+	private function valid_worker_token( int $post_id, string $token ): bool {
+		$stored = get_post_meta( $post_id, self::META_WORKER, true );
+		return '' !== $token && is_string( $stored ) && '' !== $stored && hash_equals( $stored, hash( 'sha256', $token ) );
+	}
+
+	/**
+	 * Records an immediate dispatch failure unless a worker has already started.
+	 *
+	 * @param int         $post_id Translation post ID.
+	 * @param WP_Error    $error   Dispatch error.
+	 * @param string|null $worker_token Token for a direct worker request.
+	 */
+	private function fail_start( int $post_id, WP_Error $error, ?string $worker_token = null ): void {
+		$lock = $this->acquire_lock( $post_id );
+		if ( null === $lock ) {
+			return;
+		}
+
+		try {
+			clean_post_cache( $post_id );
+			if ( self::STATUS_PENDING !== get_post_meta( $post_id, self::META_STATUS, true )
+				|| ( null !== $worker_token && ! $this->valid_worker_token( $post_id, $worker_token ) )
+			) {
+				return;
+			}
+
+			delete_post_meta( $post_id, self::META_WORKER );
+			$message = sprintf(
+				/* translators: %s: Error reported when starting the background worker. */
+				__( 'Could not start the translation worker: %s', 'translate-with-ai-for-polylang' ),
+				$error->get_error_message()
+			);
+			$failure = new WP_Error( 'twaifp_worker_start_failed', $message );
+			update_post_meta( $post_id, self::META_ERROR, $message );
+			$this->set_status( $post_id, self::STATUS_FAILED );
+			$language = get_post_meta( $post_id, self::META_LANGUAGE, true );
+			do_action( 'twaifp_translation_failed', $post_id, $failure, is_array( $language ) ? $language : [] );
+		} finally {
+			$this->release_lock( $post_id, $lock );
 		}
 	}
 

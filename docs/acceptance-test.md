@@ -10,7 +10,7 @@ The PHPUnit tests (`composer test`) only cover the pure helpers. Run this script
 - At least two Polylang languages: the source (default `en`) and the target (default `nb`). Change them with `TWAIFP_SOURCE_LANG` and `TWAIFP_TARGET_LANG`.
 - A working AI provider for the WordPress AI Client. Test that it works with `wp eval 'var_dump( wp_ai_client_prompt( "Say OK" )->generate_text() );'`.
 - An administrator account.
-- The site must be able to send HTTP requests to itself, which WordPress uses to start WP-Cron. The test checks that background jobs start even when `DISABLE_WP_CRON` is set.
+- The site must be able to send HTTP requests to its own admin URL, with a verifiable HTTPS certificate when applicable. The test checks the direct background worker.
 - `bash`, `curl` and WP-CLI.
 
 ## Running
@@ -48,7 +48,7 @@ The script creates five published source posts in the source language, built fro
 
 1. **`wp twaifp translate` (synchronous)**: creates a linked draft in the target language. Title, excerpt and content are translated, and the slug follows the translated title. The block structure is unchanged, URLs and shortcodes are untouched, and the category is swapped for its translation. No cron event is left behind.
 2. **CLI errors**: the right message for a language that is already translated, an unknown language (which lists valid ones), a missing `--user`, a missing post, and `wp twaifp run` on a post with no job. None of these create a draft.
-3. **`wp twaifp translate --async`**: the draft is linked right away, and the job queued with WP-Cron starts at once and finishes.
+3. **`wp twaifp translate --async`**: the draft is linked right away, and the direct worker starts and finishes without scheduling a cron event.
 4. **`wp twaifp run`**: re-running a finished translation works.
 5. **Worker lock**:
    - While another worker holds the post's lock, a second run is refused and changes nothing.
@@ -61,6 +61,7 @@ The script creates five published source posts in the source language, built fro
    - Polylang's **+** link points to the plugin. Clicking it creates and queues a draft and goes back to the post list, which shows a status notice and loads the status poller. The background job finishes and the post list shows **AI translation complete**.
    - The status endpoint reports both pending and completed jobs. The editor warns against editing a draft while its translation is pending.
    - A second **+** for the same language is rejected with a 400. A bad security token is rejected with a 403. A logged-out request is sent to the login page. None of these create a draft.
+   - A direct worker request without a valid token is rejected.
    - The post list shows the failed label and retry link. Retry re-queues the job, which then finishes. Retry is refused once the job is done.
 9. **Delete a queued draft**: with `twaifp_spawn_cron` returning false, the job stays queued. Deleting the draft removes its scheduled event.
 10. **PHP log**: no new plugin errors or notices in `wp-content/debug.log` during the run.
@@ -83,6 +84,6 @@ foreach ( get_terms( [ "taxonomy" => "category", "hide_empty" => false, "search"
 
 ## Troubleshooting
 
-- **"spawned cron finished the job" fails**: the site can't send HTTP requests to itself. The script then runs the cron event by hand so the other checks can go on. Fix loopback requests, or rely on a system cron.
+- **"direct worker finished the job" fails**: check loopback requests and HTTPS certificate verification. The script then runs the job with WP-CLI so the other checks can go on.
 - **Block structure or translation checks fail**: check the AI provider and model. The `twaifp_prompt_builder` filter selects the model.
 - **"Could not resolve admin user"**: set `TWAIFP_USER` to an administrator's login.

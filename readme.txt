@@ -2,10 +2,10 @@
 Contributors: PerS
 Tags: polylang, translation, ai, multilingual, translate
 Requires at least: 7.0
-Tested up to: 7.0
+Tested up to: 7.2
 Requires PHP: 8.3
 Requires Plugins: polylang
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPL v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -19,7 +19,7 @@ Translate with AI for Polylang changes what Polylang's "Add a translation" (+) b
 
 * Works from the + button you already use in post lists.
 * Creates the draft the way Polylang does: it copies menu order, comment and ping status, translated parent, sticky state, and the taxonomies and custom fields Polylang syncs.
-* Translates in the background with WP-Cron. The post list shows the progress.
+* Starts a background worker directly without waiting for WP-Cron. The post list shows the progress.
 * Keeps block markup intact. The WordPress HTML API pulls out only the text (text nodes, alt and title text, and text in block attributes), so the AI never sees or changes tags, URLs, image IDs or block structure.
 * Only one worker translates a post at a time, so retries and CLI runs can't race each other.
 * Never overwrites manual edits. If the draft is edited during translation, the AI result is thrown away.
@@ -60,7 +60,7 @@ Use the `twaifp_prompt_builder` filter:
 
 = The translation is stuck. What do I do? =
 
-The plugin runs WP-Cron right after it queues a job. If your site blocks loopback requests, run `wp cron event run --due-now`, or translate right away with `wp twaifp run <post_id>`. Jobs stuck in processing for more than 15 minutes get a "Retry translation" link.
+The plugin starts a worker using a request to its own admin URL. If the site blocks loopback requests or cannot verify its HTTPS certificate, fix the loopback configuration or run `wp twaifp run <post_id>`. A reported start failure can be retried immediately. Jobs still pending or processing after 15 minutes get a "Retry translation" link. Previously queued WP-Cron jobs continue to run.
 
 = Why did the translation fail? =
 
@@ -83,6 +83,14 @@ See README.md for arguments.
 Renamed from AI Translator for Polylang. Let pending translations finish, then deactivate and delete the old plugin before activating this one.
 
 == Changelog ==
+
+= 1.1.0 =
+* Start translation jobs with a direct authenticated background request rather than waiting for WP-Cron; retain compatibility with existing scheduled jobs and sites opting out through twaifp_spawn_cron.
+* Report immediate worker-start failures and keep stalled jobs retryable.
+* Explain plugin rename in README.
+* Update asset link in README.
+* Add GitHub link for user attachments.
+* Remove unnecessary URL from README.
 
 = 1.0.0 =
 * Renamed the plugin to "Translate with AI for Polylang" (slug and text domain `translate-with-ai-for-polylang`), because the old slug is already taken on WordPress.org.

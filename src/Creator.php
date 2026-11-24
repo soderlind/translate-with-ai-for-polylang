@@ -67,7 +67,7 @@ class Creator {
 	 *
 	 * @param WP_Post                                        $post     Source post.
 	 * @param array{code:string, name:string, locale:string} $language Target language.
-	 * @param bool                                           $schedule Whether to translate in WP-Cron. Pass false when the caller runs the job itself.
+	 * @param bool                                           $schedule Whether to start a background worker. Pass false when the caller runs the job itself.
 	 * @return int|WP_Error New post ID.
 	 */
 	public function create( WP_Post $post, array $language, bool $schedule = true ) {

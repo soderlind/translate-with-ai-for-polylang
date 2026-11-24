@@ -2,14 +2,14 @@
 # This file is distributed under the GPL v2 or later.
 msgid ""
 msgstr ""
-"Project-Id-Version: Translate with AI for Polylang 1.0.0\n"
+"Project-Id-Version: Translate with AI for Polylang 1.1.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/translate-with-ai-for-polylang\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-11-12T00:03:30+00:00\n"
+"POT-Creation-Date: 2026-11-24T22:22:41+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: translate-with-ai-for-polylang\n"
@@ -163,8 +163,8 @@ msgid "The WordPress AI Client is not available. WordPress 7.0 or later is requi
 msgstr ""
 
 #: src/Translation/AiClientGenerator.php:90
-#: src/Translation/TranslationJob.php:174
-#: src/Translation/TranslationJob.php:270
+#: src/Translation/TranslationJob.php:275
+#: src/Translation/TranslationJob.php:371
 msgid "Another worker took over this translation."
 msgstr ""
 
@@ -176,14 +176,28 @@ msgstr ""
 msgid "The AI response did not return one translation per text segment, so it was not saved."
 msgstr ""
 
-#: src/Translation/TranslationJob.php:128
+#: src/Translation/TranslationJob.php:96
+msgid "Invalid translation worker request."
+msgstr ""
+
+#: src/Translation/TranslationJob.php:175
 msgid "This post is already being translated."
 msgstr ""
 
-#: src/Translation/TranslationJob.php:151
+#: src/Translation/TranslationJob.php:181
+msgid "This translation worker request is no longer valid."
+msgstr ""
+
+#. translators: %s: Error reported when starting the background worker.
+#: src/Translation/TranslationJob.php:227
+#, php-format
+msgid "Could not start the translation worker: %s"
+msgstr ""
+
+#: src/Translation/TranslationJob.php:252
 msgid "Nothing to translate for this post."
 msgstr ""
 
-#: src/Translation/TranslationJob.php:281
+#: src/Translation/TranslationJob.php:382
 msgid "The post was edited while it was being translated, so the translation was not saved. Retry to translate the current version."
 msgstr ""

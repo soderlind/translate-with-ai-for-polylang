@@ -164,18 +164,19 @@ OUT=$(wpc twaifp translate 99999999 --language="$TGT_LANG" --user="$AT_USER"); h
 OUT=$(wpc twaifp run "$A" --user="$AT_USER");                       has "run on non-job post"      "$OUT" "Nothing to translate"
 check "no translation created by failed calls" "$(ev "echo pll_get_post($B, '$TGT_LANG') ?: 0;")" 0
 
-echo "== 3. wp twaifp translate --async (spawn_cron while DISABLE_WP_CRON)"
+echo "== 3. wp twaifp translate --async (direct background worker)"
 OUT=$(wpc twaifp translate "$B" --language="$TGT_LANG" --user="$AT_USER" --async)
 has "async reports queued" "$OUT" "queued AI translation to"
 T2=$(ev "echo pll_get_post($B, '$TGT_LANG');")
 check "draft linked immediately" "$( [ -n "$T2" ] && [ "$T2" != 0 ] && echo 1)" 1
 ST=$(wait_done "$T2" 120)
-if [ "$ST" = done ]; then ok "spawned cron finished the job"; else
-	bad "spawned cron finished the job" "status [$ST] after 120s; running cron manually"
-	wpc cron event run twaifp_translate_post >/dev/null
+if [ "$ST" = done ]; then ok "direct worker finished the job"; else
+	bad "direct worker finished the job" "status [$ST]; running the job manually"
+	wpc twaifp run "$T2" --user="$AT_USER" >/dev/null
 fi
 S=$(state "$T2")
 check "async status done"            "$(get status "$S")" done
+check "async did not schedule cron"  "$(get cron "$S")" 0
 check "async block structure kept"   "$(get blocks_equal "$S")" 1
 check "async content translated"     "$(get content_changed "$S")" 1
 
@@ -287,7 +288,7 @@ else
 fi
 has "status poller enqueued" "$(cat "$TMP/list")" "admin-status.js"
 ST=$(wait_done "$T3" 120)
-check "admin-queued job done via spawned cron" "$ST" done
+check "admin-queued job done via direct worker" "$ST" done
 S=$(state "$T3")
 check "admin job blocks preserved"   "$(get blocks_equal "$S")" 1
 check "admin job category swapped"   "$(get cats "$S")" "$CATNB"
@@ -300,6 +301,8 @@ check "status endpoint responds" "$STATUS_HTTP" 200
 has "status endpoint reports completion" "$(cat "$TMP/status")" '"status":"done"'
 STATUS_HTTP=$(curl -sk -o "$TMP/status" -w '%{http_code}' -H "Cookie: $COOKIE" -d "action=twaifp_translation_status&post_id=$T3&nonce=deadbeef" "$URL/wp-admin/admin-ajax.php")
 check "status endpoint rejects bad nonce" "$STATUS_HTTP" 403
+WORKER_HTTP=$(curl -sk -o "$TMP/worker" -w '%{http_code}' -d "action=twaifp_run_translation&post_id=$T3&token=invalid" "$URL/wp-admin/admin-ajax.php")
+check "worker endpoint rejects invalid token" "$WORKER_HTTP" 403
 
 R=$(curlc "$PLUS_C")
 has "second + for same language rejected" "$R" "400"

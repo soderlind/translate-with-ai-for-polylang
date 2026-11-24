@@ -222,7 +222,7 @@ class Admin {
 			'twaifp-admin-status',
 			plugins_url( 'assets/admin-status.js', dirname( __DIR__, 2 ) . '/translate-with-ai-for-polylang.php' ),
 			[],
-			defined( 'TWAIFP_VERSION' ) ? TWAIFP_VERSION : '1.0.0',
+			defined( 'TWAIFP_VERSION' ) ? TWAIFP_VERSION : '1.1.0',
 			true
 		);
 		wp_localize_script(
