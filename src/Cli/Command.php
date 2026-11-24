@@ -39,7 +39,7 @@ class Command {
 	 * : Polylang language slug, e.g. nb.
 	 *
 	 * [--async]
-	 * : Queue the translation in WP-Cron instead of running it now.
+	 * : Start the translation in the background instead of running it now.
 	 *
 	 * ## EXAMPLES
 	 *
@@ -70,6 +70,10 @@ class Command {
 		}
 
 		if ( $async ) {
+			$state = $this->job->state( $translation_id );
+			if ( $state && $state->status === TranslationJob::STATUS_FAILED ) {
+				WP_CLI::error( sprintf( 'Created translation %d, but translation failed: %s', $translation_id, $state->error ) );
+			}
 			WP_CLI::success( sprintf( 'Created translation %d and queued AI translation to %s.', $translation_id, $language['name'] ) );
 			return;
 		}

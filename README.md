@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/2f8c51da-143d-496f-9f88-2c5d5382d644
 
 1. In a post list, click the **+** next to a language that has no translation yet.
 2. The plugin creates a **draft** in that language, linked to the source post. It copies what Polylang's own "Add a translation" copies: menu order, comment and ping status, translated parent, sticky state, and the taxonomies and custom fields Polylang syncs.
-3. A WP-Cron job sends the title, excerpt and content to the AI and saves the translation into the draft.
+3. A direct background request sends the title, excerpt and content to the AI and saves the translation into the draft. It does not wait for WP-Cron.
 4. While the job runs, the post list shows **Translating to {language}…** and the confirmation notice updates automatically. The editor warns you not to edit or publish the draft while translation is running.
 5. When the job finishes, the post list shows **AI translation complete** and the status notice links to the draft. If it fails, the notice and post state show the error and a retry link.
 6. Review the draft and publish it.
@@ -28,11 +28,14 @@ https://github.com/user-attachments/assets/2f8c51da-143d-496f-9f88-2c5d5382d644
 - If the AI doesn't return one translation per item, the plugin tries once more and then marks the job failed.
 - If someone edits the draft while it is being translated, the plugin throws away the AI result instead of overwriting their changes. It compares the title, excerpt and content as well as the modified time.
 - Only one worker translates a post at a time, using a lock in the options table. The worker refreshes the lock before every AI request. A lock with no refresh for 15 minutes can be taken over, and a worker that loses its lock stops without saving.
+- Each background request uses a single-use token; only its hash is stored. The worker checks it again after acquiring the lock.
 - The job saves as the user who asked for the translation, so kses and capability checks work as they do in a normal edit.
 
 ### Retrying
 
-A **Retry translation** row action shows up on translations that failed or have been stuck in processing for more than 15 minutes.
+A **Retry translation** row action shows up on translations that failed or have been pending or processing for more than 15 minutes. An immediately reported dispatch failure is shown as a failure and can be retried immediately. A background request may also fail without reporting an error, in which case it remains pending until it can be retried. You can run `wp twaifp run <post_id>` immediately instead.
+
+The site must be able to make an HTTP request to its own admin URL. HTTPS certificates are verified. Previously queued WP-Cron jobs still run after upgrading.
 
 If WordPress finds no usable AI provider for a request (it reports "No models found…", often a brief network or rate-limit hiccup), the plugin waits five seconds and tries once more. If that also fails, the job fails with "The AI provider could not be reached. Check Settings → Connectors and retry."
 
@@ -42,7 +45,7 @@ If WordPress finds no usable AI provider for a request (it reports "No models fo
 # Create a Norwegian translation of post 42 and translate it now.
 wp twaifp translate 42 --language=nb --user=admin
 
-# Create it, but let WP-Cron translate it.
+# Create it and start the background worker.
 wp twaifp translate 42 --language=nb --user=admin --async
 
 # Run (or re-run) the AI translation of translation post 43.
@@ -63,7 +66,7 @@ wp twaifp run 43
 | `twaifp_translatable_block_attributes` | `string[] $keys` | Block attribute (JSON) keys whose string values are translated. Default `alt`, `caption`, `label`, `placeholder`, `title`, `buttonText`, `text`, `content`, `citation`. |
 | `twaifp_request_timeout` | `int $timeout` | AI request timeout in seconds. Default `180`. |
 | `twaifp_translated_post_data` | `array $data, WP_Post $post, array $language` | Change the post data before it goes to `wp_update_post()`. |
-| `twaifp_spawn_cron` | `bool $spawn, int $post_id` | Whether to start WP-Cron right after queuing. Default `true`, even when `DISABLE_WP_CRON` is set. |
+| `twaifp_spawn_cron` | `bool $spawn, int $post_id` | Whether to start the direct worker immediately. Default `true`, even when `DISABLE_WP_CRON` is set. Return `false` to retain the previous behavior of scheduling the job for WP-Cron without spawning it. |
 
 ### Actions
 
@@ -128,3 +131,7 @@ See [docs/acceptance-test.md](docs/acceptance-test.md).
 ## License
 
 GPL v2 or later. Copyright Per Soderlind.
+
+## AI contribution attribution
+
+When AI tools contribute, include an `Assisted-by: AGENT_NAME:MODEL_VERSION [TOOL1] [TOOL2]` tag. Specialized analysis tools are optional; omit basic development tools.
