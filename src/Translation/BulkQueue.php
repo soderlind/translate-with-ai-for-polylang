@@ -20,6 +20,8 @@ class BulkQueue {
 	public const META_BATCH    = '_twaifp_bulk_batch';
 	public const OPTION_PREFIX = '_twaifp_bulk_batch_';
 
+	private const WRITE_ATTEMPTS = 3;
+
 	/**
 	 * Constructor.
 	 *
@@ -58,6 +60,7 @@ class BulkQueue {
 			'current'  => 0,
 			'updated'  => time(),
 			'paused'   => false,
+			'revision' => 0,
 		];
 
 		if ( ! add_option( self::OPTION_PREFIX . $batch_id, $batch, '', false ) ) {
@@ -150,17 +153,24 @@ class BulkQueue {
 			return;
 		}
 
-		$context = self::batch_for_post( $post_id );
-		if ( null === $context || $context['current_id'] !== $post_id ) {
-			return;
-		}
+		for ( $attempt = 0; $attempt < self::WRITE_ATTEMPTS; $attempt++ ) {
+			$context = self::batch_for_post( $post_id );
+			if ( null === $context || $context['current_id'] !== $post_id || $context['batch']['paused'] ) {
+				return;
+			}
 
-		$batch            = $context['batch'];
-		$batch['paused']  = true;
-		$batch['updated'] = time();
-		if ( ! $this->save_batch( $context['id'], $batch ) ) {
-			error_log( 'Translate with AI for Polylang: could not pause a bulk translation queue.' );
+			$batch            = $context['batch'];
+			$batch['paused']  = true;
+			$batch['updated'] = time();
+			$saved            = $this->save_batch( $context['id'], $batch, $context['batch'] );
+			if ( 1 === $saved ) {
+				return;
+			}
+			if ( false === $saved ) {
+				break;
+			}
 		}
+		error_log( 'Translate with AI for Polylang: could not pause a bulk translation queue.' );
 	}
 
 	/**
@@ -169,29 +179,42 @@ class BulkQueue {
 	 * @param int $post_id Translation post ID.
 	 */
 	public function deleting( int $post_id ): void {
-		$context = self::batch_for_post( $post_id );
-		if ( null === $context ) {
-			return;
-		}
-
-		foreach ( $context['batch']['post_ids'] as $index => $member ) {
-			$member = (int) $member;
-			if ( $index >= (int) $context['batch']['current'] && $member !== $post_id && get_post( $member ) instanceof WP_Post ) {
-				if ( $context['current_id'] === $post_id ) {
-					$batch            = $context['batch'];
-					$batch['updated'] = time();
-					if ( ! $this->save_batch( $context['id'], $batch ) ) {
-						error_log( 'Translate with AI for Polylang: could not record a deleted bulk translation.' );
-					}
-				}
+		$message = 'Translate with AI for Polylang: could not record a deleted bulk translation.';
+		for ( $attempt = 0; $attempt < self::WRITE_ATTEMPTS; $attempt++ ) {
+			$context = self::batch_for_post( $post_id );
+			if ( null === $context ) {
 				return;
 			}
-		}
 
-		$name = self::OPTION_PREFIX . $context['id'];
-		if ( ! delete_option( $name ) && false !== get_option( $name ) ) {
-			error_log( 'Translate with AI for Polylang: could not remove an abandoned bulk translation queue.' );
+			$remaining = false;
+			foreach ( $context['batch']['post_ids'] as $index => $member ) {
+				$member = (int) $member;
+				if ( $index >= (int) $context['batch']['current'] && $member !== $post_id && get_post( $member ) instanceof WP_Post ) {
+					$remaining = true;
+					break;
+				}
+			}
+
+			if ( $remaining && $context['current_id'] !== $post_id ) {
+				return;
+			}
+
+			if ( $remaining ) {
+				$batch            = $context['batch'];
+				$batch['updated'] = time();
+				$saved            = $this->save_batch( $context['id'], $batch, $context['batch'] );
+			} else {
+				$message = 'Translate with AI for Polylang: could not remove an abandoned bulk translation queue.';
+				$saved   = $this->delete_batch( $context['id'], $context['batch'] );
+			}
+			if ( 1 === $saved ) {
+				return;
+			}
+			if ( false === $saved ) {
+				break;
+			}
 		}
+		error_log( $message );
 	}
 
 	/**
@@ -236,8 +259,11 @@ class BulkQueue {
 		$batch            = $context['batch'];
 		$batch['paused']  = false;
 		$batch['updated'] = time();
-		if ( ! $this->save_batch( $context['id'], $batch ) ) {
-			$error = new WP_Error( 'twaifp_batch_storage', __( 'Could not resume the bulk translation queue.', 'translate-with-ai-for-polylang' ) );
+		$saved            = $this->save_batch( $context['id'], $batch, $context['batch'] );
+		if ( 1 !== $saved ) {
+			$error = false === $saved
+				? new WP_Error( 'twaifp_batch_storage', __( 'Could not resume the bulk translation queue.', 'translate-with-ai-for-polylang' ) )
+				: self::changed_error();
 			$this->job->fail_pending( $current_id, $error );
 			return $error;
 		}
@@ -270,35 +296,57 @@ class BulkQueue {
 	 * @return true|WP_Error
 	 */
 	private function advance( string $batch_id, array $batch ) {
-		$old_index = (int) $batch['current'];
-		$retired   = [ (int) $batch['post_ids'][ $old_index ] ];
-		$count     = count( $batch['post_ids'] );
+		for ( $attempt = 0; $attempt < self::WRITE_ATTEMPTS; $attempt++ ) {
+			$old_index = (int) $batch['current'];
+			$retired   = [ (int) $batch['post_ids'][ $old_index ] ];
+			$count     = count( $batch['post_ids'] );
+			$next      = null;
 
-		for ( $index = $old_index + 1; $index < $count; $index++ ) {
-			$post_id = (int) $batch['post_ids'][ $index ];
-			$post    = get_post( $post_id );
-			$state   = $post instanceof WP_Post ? $this->job->state( $post_id ) : null;
-			if ( ! $state || $batch_id !== get_post_meta( $post_id, self::META_BATCH, true ) || $state->is_finished() ) {
-				$retired[] = $post_id;
-				continue;
+			for ( $index = $old_index + 1; $index < $count; $index++ ) {
+				$post_id = (int) $batch['post_ids'][ $index ];
+				$post    = get_post( $post_id );
+				$state   = $post instanceof WP_Post ? $this->job->state( $post_id ) : null;
+				if ( ! $state || $batch_id !== get_post_meta( $post_id, self::META_BATCH, true ) || $state->is_finished() ) {
+					$retired[] = $post_id;
+					continue;
+				}
+				$next = $index;
+				break;
 			}
 
-			$batch['current'] = $index;
-			$batch['updated'] = time();
-			$batch['paused']  = false;
-			if ( ! $this->save_batch( $batch_id, $batch ) ) {
-				return new WP_Error( 'twaifp_batch_storage', __( 'Could not advance the bulk translation queue.', 'translate-with-ai-for-polylang' ) );
+			if ( null === $next ) {
+				$saved = $this->delete_batch( $batch_id, $batch );
+			} else {
+				$updated            = $batch;
+				$updated['current'] = $next;
+				$updated['updated'] = time();
+				$updated['paused']  = false;
+				$saved              = $this->save_batch( $batch_id, $updated, $batch );
 			}
 
-			$this->clear_membership( $retired, $batch_id );
-			return $this->start_current( $batch_id, $batch );
+			if ( 1 === $saved ) {
+				$this->clear_membership( $retired, $batch_id );
+				return null === $next ? true : $this->start_current( $batch_id, $updated );
+			}
+			if ( false === $saved ) {
+				$message = null === $next
+					? __( 'Could not finish the bulk translation queue.', 'translate-with-ai-for-polylang' )
+					: __( 'Could not advance the bulk translation queue.', 'translate-with-ai-for-polylang' );
+				return new WP_Error( 'twaifp_batch_storage', $message );
+			}
+
+			$latest = self::load_batch( $batch_id );
+			if ( null === $latest
+				|| $latest['post_ids'] !== $batch['post_ids']
+				|| (int) $latest['current'] !== (int) $batch['current']
+				|| (bool) $latest['paused'] !== (bool) $batch['paused']
+			) {
+				return self::changed_error();
+			}
+			$batch = $latest;
 		}
 
-		if ( ! delete_option( self::OPTION_PREFIX . $batch_id ) ) {
-			return new WP_Error( 'twaifp_batch_storage', __( 'Could not finish the bulk translation queue.', 'translate-with-ai-for-polylang' ) );
-		}
-		$this->clear_membership( $retired, $batch_id );
-		return true;
+		return self::changed_error();
 	}
 
 	/**
@@ -362,11 +410,8 @@ class BulkQueue {
 			return null;
 		}
 
-		$batch = get_option( self::OPTION_PREFIX . $batch_id );
-		if ( ! is_array( $batch ) || ! isset( $batch['post_ids'], $batch['current'], $batch['updated'], $batch['paused'] )
-			|| ! is_array( $batch['post_ids'] ) || ! isset( $batch['post_ids'][ (int) $batch['current'] ] )
-			|| ! in_array( $post_id, $batch['post_ids'], true )
-		) {
+		$batch = self::load_batch( $batch_id );
+		if ( null === $batch || ! in_array( $post_id, $batch['post_ids'], true ) ) {
 			return null;
 		}
 
@@ -390,15 +435,92 @@ class BulkQueue {
 	}
 
 	/**
-	 * Saves a batch, accepting an unchanged value as success.
+	 * Reads the batch directly so concurrent requests cannot use a cached snapshot.
+	 *
+	 * @param string $batch_id Batch identifier.
+	 * @return array<string,mixed>|null
+	 */
+	private static function load_batch( string $batch_id ): ?array {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$stored = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", self::OPTION_PREFIX . $batch_id ) );
+		if ( null === $stored ) {
+			if ( '' !== $wpdb->last_error ) {
+				error_log( 'Translate with AI for Polylang: could not read a bulk translation queue.' );
+			}
+			return null;
+		}
+
+		$batch = maybe_unserialize( $stored );
+		if ( ! is_array( $batch ) || ! isset( $batch['post_ids'], $batch['current'], $batch['updated'], $batch['paused'] )
+			|| ! is_array( $batch['post_ids'] ) || ! isset( $batch['post_ids'][ (int) $batch['current'] ] )
+		) {
+			return null;
+		}
+		return $batch;
+	}
+
+	/**
+	 * Saves a batch only if the stored snapshot has not changed.
 	 *
 	 * @param string              $batch_id Batch identifier.
-	 * @param array<string,mixed> $batch    Batch state.
-	 * @return bool
+	 * @param array<string,mixed> $batch    New batch state, updated with its revision.
+	 * @param array<string,mixed> $expected Previous batch state.
+	 * @return int|false Rows changed, or false on a database error.
 	 */
-	private function save_batch( string $batch_id, array $batch ): bool {
+	private function save_batch( string $batch_id, array &$batch, array $expected ): int|false {
+		global $wpdb;
+
 		$name = self::OPTION_PREFIX . $batch_id;
-		return update_option( $name, $batch, false ) || get_option( $name ) === $batch;
+		$batch['revision'] = (int) ( $expected['revision'] ?? 0 ) + 1;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$saved = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND BINARY option_value = %s",
+				maybe_serialize( $batch ),
+				$name,
+				maybe_serialize( $expected )
+			)
+		);
+		if ( 1 === $saved ) {
+			wp_cache_delete( $name, 'options' );
+		}
+		return $saved;
+	}
+
+	/**
+	 * Removes a batch only if the stored snapshot has not changed.
+	 *
+	 * @param string              $batch_id Batch identifier.
+	 * @param array<string,mixed> $expected Previous batch state.
+	 * @return int|false Rows deleted, or false on a database error.
+	 */
+	private function delete_batch( string $batch_id, array $expected ): int|false {
+		global $wpdb;
+
+		$name = self::OPTION_PREFIX . $batch_id;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND BINARY option_value = %s",
+				$name,
+				maybe_serialize( $expected )
+			)
+		);
+		if ( 1 === $deleted ) {
+			wp_cache_delete( $name, 'options' );
+		}
+		return $deleted;
+	}
+
+	/**
+	 * Reports a competing batch transition.
+	 *
+	 * @return WP_Error
+	 */
+	private static function changed_error(): WP_Error {
+		return new WP_Error( 'twaifp_batch_changed', __( 'The bulk translation queue changed while it was being updated. Please try again.', 'translate-with-ai-for-polylang' ) );
 	}
 
 	/**

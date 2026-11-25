@@ -30,6 +30,8 @@ Existing failed AI drafts are retried; other existing translations, posts withou
 
 If a worker cannot start, the batch pauses. Fix the problem and use **Retry translation** on the failed draft or **Resume bulk translation** on a waiting draft. If a worker disappears or its draft is deleted, waiting drafts offer the resume action after 15 minutes. Resuming requires permission to edit both the selected draft and the current draft, if it still exists.
 
+If simultaneous resumes conflict, one request reports that the queue changed; retry based on its current status.
+
 ### What keeps the content safe
 
 - The AI never sees the markup. The WordPress HTML API pulls out the text: text nodes, the `alt`, `title`, `aria-label` and `placeholder` attributes, and text values in block attributes such as a navigation link's `label`. The AI gets them as an ordered JSON list and returns one translation per item. Each translation is written back into the original markup, so tags, URLs, classes, image IDs and block structure stay exactly as they were.

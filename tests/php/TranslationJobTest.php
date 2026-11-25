@@ -36,16 +36,47 @@ final class TranslationJobTest extends TestCase {
 		parent::setUp();
 
 		global $wpdb;
-		$wpdb = new class() {
+		$wpdb = new class( $this->options ) {
 			public string $options = 'wp_options';
+			public string $last_error = '';
+			public ?\Closure $before_batch_write = null;
+			public bool $allow_batch_writes = true;
+			private array $batch_options;
 			private array $locks = [];
+
+			public function __construct( array &$batch_options ) {
+				$this->batch_options = &$batch_options;
+			}
 
 			public function prepare( string $query, mixed ...$args ): array {
 				return [ $query, $args ];
 			}
 
-			public function query( array $prepared ): int {
+			public function query( array $prepared ): int|false {
 				[ $query, $args ] = $prepared;
+				$batch_update = str_starts_with( $query, 'UPDATE' ) && str_starts_with( $args[1], BulkQueue::OPTION_PREFIX );
+				$batch_delete = str_starts_with( $query, 'DELETE' ) && str_starts_with( $args[0], BulkQueue::OPTION_PREFIX );
+				if ( $batch_update || $batch_delete ) {
+					if ( null !== $this->before_batch_write ) {
+						$callback = $this->before_batch_write;
+						$this->before_batch_write = null;
+						$callback();
+					}
+					if ( ! $this->allow_batch_writes ) {
+						return false;
+					}
+					$name     = $batch_update ? $args[1] : $args[0];
+					$expected = $batch_update ? $args[2] : $args[1];
+					if ( ! isset( $this->batch_options[ $name ] ) || serialize( $this->batch_options[ $name ] ) !== $expected ) {
+						return 0;
+					}
+					if ( $batch_update ) {
+						$this->batch_options[ $name ] = unserialize( $args[0], [ 'allowed_classes' => false ] );
+					} else {
+						unset( $this->batch_options[ $name ] );
+					}
+					return 1;
+				}
 				if ( str_starts_with( $query, 'INSERT IGNORE' ) ) {
 					if ( isset( $this->locks[ $args[0] ] ) ) {
 						return 0;
@@ -70,7 +101,11 @@ final class TranslationJobTest extends TestCase {
 			}
 
 			public function get_var( array $prepared ): ?string {
-				return $this->locks[ $prepared[1][0] ] ?? null;
+				$name = $prepared[1][0];
+				if ( str_starts_with( $name, BulkQueue::OPTION_PREFIX ) ) {
+					return isset( $this->batch_options[ $name ] ) ? serialize( $this->batch_options[ $name ] ) : null;
+				}
+				return $this->locks[ $name ] ?? null;
 			}
 
 			public function esc_like( string $value ): string {
@@ -357,6 +392,109 @@ final class TranslationJobTest extends TestCase {
 		$this->assertSame( [], $this->options );
 	}
 
+	public function test_concurrent_resumes_preserve_a_worker_start_failure(): void {
+		$queue = $this->prepare_bulk( [ 11, 12, 13 ] );
+		$queue->start( [ 11, 12, 13 ] );
+		$option = array_key_first( $this->options );
+		$this->options[ $option ]['updated'] = time() - JobState::STALE_AFTER - 1;
+		unset( $this->posts[11], $this->meta[11] );
+		$raced = false;
+
+		global $wpdb;
+		$wpdb->before_batch_write = function () use ( $queue, &$raced ): void {
+			$raced = true;
+			$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+			$this->assertSame( 'http_request_failed', $queue->resume( 13, 5 )->get_error_code() );
+		};
+
+		$this->assertSame( 'twaifp_batch_changed', $queue->resume( 13, 5 )->get_error_code() );
+
+		$this->assertTrue( $raced );
+		$this->assertSame( 1, $this->options[ $option ]['current'] );
+		$this->assertTrue( $this->options[ $option ]['paused'] );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertTrue( $this->job->state( 13 )->can_retry() );
+	}
+
+	public function test_concurrent_resume_cannot_skip_a_failure_after_another_job_finishes(): void {
+		$queue = $this->prepare_bulk( [ 11, 12, 13, 14 ] );
+		$queue->start( [ 11, 12, 13, 14 ] );
+		$option = array_key_first( $this->options );
+		$this->options[ $option ]['updated'] = time() - JobState::STALE_AFTER - 1;
+		unset( $this->posts[11], $this->meta[11] );
+		$raced = false;
+
+		global $wpdb;
+		$wpdb->before_batch_write = function () use ( $queue, &$raced ): void {
+			$raced = true;
+			$this->assertTrue( $queue->resume( 14, 5 ) );
+			$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+			$this->assertTrue( $this->run_request( 1 ) );
+		};
+
+		$this->assertSame( 'twaifp_batch_changed', $queue->resume( 14, 5 )->get_error_code() );
+
+		$this->assertTrue( $raced );
+		$this->assertSame( 2, $this->options[ $option ]['current'] );
+		$this->assertTrue( $this->options[ $option ]['paused'] );
+		$this->assertSame( [ 11, 12, 13 ], $this->request_ids() );
+
+		$this->response = [];
+		$this->assertTrue( $queue->resume( 14, 9 ) );
+		$this->assertTrue( $this->run_request( 3 ) );
+		$this->assertSame( [ 11, 12, 13, 13, 14 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 4 ) );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_advancement_retries_after_a_concurrent_batch_heartbeat(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$queue->start( [ 11, 12 ] );
+		$raced = false;
+		global $wpdb;
+		$wpdb->before_batch_write = static function () use ( $queue, &$raced ): void {
+			$raced = true;
+			$queue->deleting( 11 );
+		};
+
+		$this->assertTrue( $this->run_request( 0 ) );
+		$this->assertTrue( $raced );
+		$this->assertSame( [ 11, 12 ], $this->request_ids() );
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertSame( [], $this->options );
+	}
+
+	public function test_worker_start_failure_retries_its_pause_after_a_concurrent_heartbeat(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+		$raced = false;
+		global $wpdb;
+		$wpdb->before_batch_write = static function () use ( $queue, &$raced ): void {
+			$raced = true;
+			$queue->deleting( 11 );
+		};
+
+		$this->assertSame( 'http_request_failed', $queue->start( [ 11, 12 ] )->get_error_code() );
+		$this->assertTrue( $raced );
+		$this->assertTrue( $this->job->state( 12 )->batch_paused );
+		$this->response = [];
+		$this->assertTrue( $queue->resume( 12, 5 ) );
+		$this->assertTrue( $this->run_request( 1 ) );
+		$this->assertTrue( $this->run_request( 2 ) );
+	}
+
+	public function test_a_failed_atomic_batch_write_is_reported(): void {
+		$queue = $this->prepare_bulk( [ 11, 12 ] );
+		$this->response = new WP_Error( 'http_request_failed', 'Loopback blocked.' );
+		$queue->start( [ 11, 12 ] );
+		global $wpdb;
+		$wpdb->allow_batch_writes = false;
+
+		$this->assertSame( 'twaifp_batch_storage', $queue->resume( 12, 5 )->get_error_code() );
+		$this->assertTrue( $this->job->state( 12 )->batch_paused );
+		$this->assertSame( [ 11 ], $this->request_ids() );
+	}
+
 	public function test_deleting_all_drafts_removes_only_their_abandoned_batch(): void {
 		$queue = $this->prepare_bulk( [ 11, 12 ] );
 		$queue->start( [ 11, 12 ] );
@@ -568,15 +706,9 @@ final class TranslationJobTest extends TestCase {
 			}
 		);
 		Functions\when( 'get_option' )->alias( fn( $name ) => $this->options[ $name ] ?? false );
-		Functions\when( 'update_option' )->alias(
-			function ( $name, $value ): bool {
-				if ( ( $this->options[ $name ] ?? null ) === $value ) {
-					return false;
-				}
-				$this->options[ $name ] = $value;
-				return true;
-			}
-		);
+		Functions\when( 'maybe_serialize' )->alias( static fn( $value ) => serialize( $value ) );
+		Functions\when( 'maybe_unserialize' )->alias( static fn( $value ) => unserialize( $value, [ 'allowed_classes' => false ] ) );
+		Functions\when( 'wp_cache_delete' )->justReturn( true );
 		Functions\when( 'delete_option' )->alias(
 			function ( $name ): bool {
 				if ( ! isset( $this->options[ $name ] ) ) {

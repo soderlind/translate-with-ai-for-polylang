@@ -89,7 +89,7 @@ msgid "Translation failed — view error"
 msgstr "Oversettelsen mislyktes – vis feil"
 
 #: src/Admin/Admin.php:193
-#: src/Translation/BulkQueue.php:211
+#: src/Translation/BulkQueue.php:234
 #: src/Translation/TranslationJob.php:190
 msgid "This translation cannot be retried."
 msgstr "Denne oversettelsen kan ikke prøves på nytt."
@@ -233,43 +233,43 @@ msgstr "En annen arbeidsprosess overtok denne oversettelsen."
 msgid "The AI provider could not be reached. Check Settings → Connectors and retry."
 msgstr "Kunne ikke kontakte KI-leverandøren. Kontroller Innstillinger → Tilkoblinger og prøv på nytt."
 
-#: src/Translation/BulkQueue.php:47
+#: src/Translation/BulkQueue.php:49
 msgid "There are no translations to queue."
 msgstr "Det finnes ingen oversettelser å legge i kø."
 
-#: src/Translation/BulkQueue.php:52
+#: src/Translation/BulkQueue.php:54
 msgid "Could not create a bulk translation queue identifier."
 msgstr "Kunne ikke opprette en identifikator for køen for masseoversettelse."
 
-#: src/Translation/BulkQueue.php:64
+#: src/Translation/BulkQueue.php:67
 msgid "Could not save the bulk translation queue."
 msgstr "Kunne ikke lagre køen for masseoversettelse."
 
-#: src/Translation/BulkQueue.php:72
+#: src/Translation/BulkQueue.php:75
 msgid "Could not associate a translation with the bulk queue."
 msgstr "Kunne ikke knytte oversettelsen til køen for masseoversettelse."
 
-#: src/Translation/BulkQueue.php:207
+#: src/Translation/BulkQueue.php:230
 msgid "The bulk translation queue is no longer available."
 msgstr "Køen for masseoversettelse er ikke lenger tilgjengelig."
 
-#: src/Translation/BulkQueue.php:220
+#: src/Translation/BulkQueue.php:243
 msgid "You are not allowed to retry the current translation in this bulk queue."
 msgstr "Du har ikke tillatelse til å prøve den gjeldende oversettelsen i denne køen på nytt."
 
-#: src/Translation/BulkQueue.php:228
+#: src/Translation/BulkQueue.php:251
 msgid "The current bulk translation is still running."
 msgstr "Den gjeldende masseoversettelsen pågår fortsatt."
 
-#: src/Translation/BulkQueue.php:240
+#: src/Translation/BulkQueue.php:265
 msgid "Could not resume the bulk translation queue."
 msgstr "Kunne ikke fortsette køen for masseoversettelse."
 
-#: src/Translation/BulkQueue.php:290
+#: src/Translation/BulkQueue.php:334
 msgid "Could not advance the bulk translation queue."
 msgstr "Kunne ikke gå videre til neste oversettelse i køen."
 
-#: src/Translation/BulkQueue.php:298
+#: src/Translation/BulkQueue.php:333
 msgid "Could not finish the bulk translation queue."
 msgstr "Kunne ikke fullføre køen for masseoversettelse."
 
@@ -366,3 +366,7 @@ msgstr "Oversetter innhold %d …"
 #, php-format
 msgid "Translated post %1$d: %2$s"
 msgstr "Oversatte innlegg %1$d: %2$s"
+
+#: src/Translation/BulkQueue.php:523
+msgid "The bulk translation queue changed while it was being updated. Please try again."
+msgstr "Køen for masseoversettelse ble endret mens den ble oppdatert. Prøv igjen."
