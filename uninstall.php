@@ -12,6 +12,7 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 }
 
 require_once __DIR__ . '/src/Translation/JobState.php';
+require_once __DIR__ . '/src/Translation/BulkQueue.php';
 require_once __DIR__ . '/src/Translation/TranslationJob.php';
 
 $twaifp_cleanup = static function (): void {
@@ -21,8 +22,15 @@ $twaifp_cleanup = static function (): void {
 		delete_metadata( 'post', 0, $key, '', true );
 	}
 	wp_unschedule_hook( Soderlind\TranslateWithAiForPolylang\Translation\TranslationJob::HOOK );
-	// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Worker locks are written with direct queries too.
-	$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $wpdb->esc_like( Soderlind\TranslateWithAiForPolylang\Translation\TranslationJob::LOCK_PREFIX ) . '%' ) );
+	foreach (
+		[
+			Soderlind\TranslateWithAiForPolylang\Translation\TranslationJob::LOCK_PREFIX,
+			Soderlind\TranslateWithAiForPolylang\Translation\BulkQueue::OPTION_PREFIX,
+		] as $twaifp_prefix
+	) {
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Remove plugin-owned lock and batch options.
+		$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $wpdb->esc_like( $twaifp_prefix ) . '%' ) );
+	}
 };
 
 if ( is_multisite() ) {

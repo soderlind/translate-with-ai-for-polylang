@@ -5,7 +5,7 @@ Requires at least: 7.0
 Tested up to: 7.2
 Requires PHP: 8.3
 Requires Plugins: polylang
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPL v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,6 +18,7 @@ Translate with AI for Polylang changes what Polylang's "Add a translation" (+) b
 = Features =
 
 * Works from the + button you already use in post lists.
+* Bulk-translate selected posts or pages into one language, processing their drafts one at a time in the background.
 * Creates the draft the way Polylang does: it copies menu order, comment and ping status, translated parent, sticky state, and the taxonomies and custom fields Polylang syncs.
 * Starts a background worker directly without waiting for WP-Cron. The post list shows the progress.
 * Keeps block markup intact. The WordPress HTML API pulls out only the text (text nodes, alt and title text, and text in block attributes), so the AI never sees or changes tags, URLs, image IDs or block structure.
@@ -25,6 +26,7 @@ Translate with AI for Polylang changes what Polylang's "Add a translation" (+) b
 * Never overwrites manual edits. If the draft is edited during translation, the AI result is thrown away.
 * A "Retry translation" row action for failed or stuck jobs.
 * WP-CLI commands: `wp twaifp translate` and `wp twaifp run`.
+* Interface and command messages available in English and Norwegian Bokmål.
 * Filters and actions for choosing a model, tuning chunk size and timeout, and changing the saved data.
 
 = Requirements =
@@ -39,6 +41,7 @@ Translate with AI for Polylang changes what Polylang's "Add a translation" (+) b
 2. Configure an AI provider for the WordPress AI Client.
 3. Upload the plugin to `/wp-content/plugins/translate-with-ai-for-polylang/` and activate it.
 4. In a post list, click the + next to a language to create an AI translation.
+5. To translate several posts or pages, select them and apply the "Translate to [language] with AI" bulk action.
 
 = Upgrading from AI Translator for Polylang =
 
@@ -60,7 +63,11 @@ Use the `twaifp_prompt_builder` filter:
 
 = The translation is stuck. What do I do? =
 
-The plugin starts a worker using a request to its own admin URL. If the site blocks loopback requests or cannot verify its HTTPS certificate, fix the loopback configuration or run `wp twaifp run <post_id>`. A reported start failure can be retried immediately. Jobs still pending or processing after 15 minutes get a "Retry translation" link. Previously queued WP-Cron jobs continue to run.
+The plugin starts a worker using a request to its own admin URL. If the site blocks loopback requests or cannot verify its HTTPS certificate, fix the loopback configuration or run `wp twaifp run <post_id>` for an individual job or the current job in a batch. A reported start failure can be retried immediately. Jobs still pending or processing after 15 minutes get a retry or resume link. Previously queued WP-Cron jobs continue to run.
+
+= How does bulk translation handle existing translations and failures? =
+
+The bulk action retries existing failed AI drafts and skips other existing translations, posts without a Polylang language, posts already in the target language, and items without the required permissions. It runs one draft at a time; a translation failure does not stop the rest. If a worker cannot start, retry the failed draft or use "Resume bulk translation" on a waiting draft. If a worker disappears or its draft is deleted, the resume action becomes available after 15 minutes.
 
 = Why did the translation fail? =
 
@@ -83,6 +90,10 @@ See README.md for arguments.
 Renamed from AI Translator for Polylang. Let pending translations finish, then deactivate and delete the old plugin before activating this one.
 
 == Changelog ==
+
+= 1.2.0 =
+* Bulk-translate selected posts or pages into one language, processing drafts sequentially with failed-draft retries and interrupted-batch recovery.
+* Norwegian Bokmål translations for the interface and WP-CLI messages.
 
 = 1.1.0 =
 * Start translation jobs with a direct authenticated background request rather than waiting for WP-Cron; retain compatibility with existing scheduled jobs and sites opting out through twaifp_spawn_cron.
